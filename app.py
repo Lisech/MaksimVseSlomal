@@ -8,13 +8,16 @@ from tkinter import ttk
 import os
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
-from PIL import Image, ImageTk  # требуется pillow
+from PIL import Image, ImageTk
+from models import Block
 
 class IDEF0App:
     def __init__(self):
         self.root = tk.Tk()
         self.setup_window()
         self.setup_ui()
+        self.blocks = []
+        self.next_block_id = 1
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -136,7 +139,6 @@ class IDEF0App:
         settings_btn.pack(side=tk.LEFT, padx=6)
 
     def create_toolbar_button(self, parent, text, icon=None):
-        """Создает кнопку для тулбара в стиле HTML макета"""
         btn = tk.Button(
             parent,
             text=text,
@@ -158,7 +160,6 @@ class IDEF0App:
         return btn
 
     def setup_main_layout(self):
-        """Основная layout-сетка как в HTML"""
         main_frame = tk.Frame(self.root, bg=Colors.BACKGROUND)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
@@ -177,7 +178,6 @@ class IDEF0App:
         properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
 
     def setup_sidebar(self, parent):
-        """Левая панель инструментов"""
         sidebar_frame = tk.Frame(
             parent,
             bg=Colors.SURFACE,
@@ -189,18 +189,19 @@ class IDEF0App:
         sidebar_frame.pack_propagate(False)
 
         tools = [
-            "MousePointer2",
-            "Hand",
-            "Square",
-            "Move",
-            "Type",
-            "Layers",
-            "ChevronUp",
-            "ChevronDown",
-            "Trash2"
+            ("MousePointer2", "Выбрать"),
+            ("Hand", "Перемещать"),
+            ("Square", "Добавить блок"),
+            ("Move", "Переместить"),
+            ("Type", "Текст"),
+            ("Layers", "Слои"),
+            ("ChevronUp", "На передний план"),
+            ("ChevronDown", "На задний план"),
+            ("Trash2", "Удалить")
         ]
 
-        for icon_name in tools:
+
+        for i, (icon_name, tooltip) in enumerate(tools):
             icon = self.load_icon(icon_name, (26, 26))
             btn = tk.Button(
                 sidebar_frame,
@@ -216,13 +217,102 @@ class IDEF0App:
             )
             btn.configure(image=icon, compound='center', padx=16, pady=16)
             btn.image = icon
+            if icon_name == "Square":
+                btn.configure(command=self.add_new_block)
             self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
             btn.pack(pady=8)
+    def add_new_block(self):
+        """Добавляет новый блок на холст с базовыми значениями"""
+        # Базовые координаты (центр видимой области)
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        x = canvas_width // 2 if canvas_width > 0 else 400
+        y = canvas_height // 2 if canvas_height > 0 else 300
+        
+        # Базовые размеры
+        width, height = 150, 80
+        
+        # Создаем блок
+        block_id = f"block_{self.next_block_id}"
+        self.next_block_id += 1
+        
+        # Рисуем прямоугольник
+        rect = self.canvas.create_rectangle(
+            x - width/2, y - height/2,
+            x + width/2, y + height/2,
+            fill="#E3F2FD",  # голубой цвет как в models.py
+            outline=Colors.TEXT_PRIMARY,
+            width=2,
+            tags=("block", block_id)
+        )
+        
+        # Добавляем текст
+        text = self.canvas.create_text(
+            x, y,
+            text=f"Блок {self.next_block_id-1}",
+            font=("Segoe UI", 10),
+            justify="center",
+            tags=("block_text", block_id)
+        )
+        
+        # Сохраняем информацию о блоке
+        block_data = {
+            "id": block_id,
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "rect_id": rect,
+            "text_id": text,
+            "name": f"Блок {self.next_block_id-1}",
+            "color": "#E3F2FD"
+        }
+        
+        self.blocks.append(block_data)
+        
+        # Делаем блок перемещаемым
+        self.make_block_draggable(block_data)
+        
+        print(f"Добавлен новый блок: {block_id}")
+        print(f"Всего блоков: {len(self.blocks)}")
 
+    def make_block_draggable(self, block_data):
+        def start_drag(event):
+            # Запоминаем начальные координаты
+            block_data["drag_data"] = {"x": event.x, "y": event.y}
+        
+        def drag(event):
+            if "drag_data" in block_data:
+                # Вычисляем смещение
+                dx = event.x - block_data["drag_data"]["x"]
+                dy = event.y - block_data["drag_data"]["y"]
+                
+                # Обновляем позицию блока
+                block_data["x"] += dx
+                block_data["y"] += dy
+                
+                # Перемещаем прямоугольник и текст
+                self.canvas.move(block_data["rect_id"], dx, dy)
+                self.canvas.move(block_data["text_id"], dx, dy)
+                
+                # Обновляем данные о перетаскивании
+                block_data["drag_data"] = {"x": event.x, "y": event.y}
+        
+        def end_drag(event):
+            if "drag_data" in block_data:
+                del block_data["drag_data"]
+                print(f"Блок {block_data['id']} перемещен в ({block_data['x']:.1f}, {block_data['y']:.1f})")
+        
+        # Привязываем обработчики событий
+        self.canvas.tag_bind(block_data["rect_id"], "<ButtonPress-1>", start_drag)
+        self.canvas.tag_bind(block_data["rect_id"], "<B1-Motion>", drag)
+        self.canvas.tag_bind(block_data["rect_id"], "<ButtonRelease-1>", end_drag)
+        
+        self.canvas.tag_bind(block_data["text_id"], "<ButtonPress-1>", start_drag)
+        self.canvas.tag_bind(block_data["text_id"], "<B1-Motion>", drag)
+        self.canvas.tag_bind(block_data["text_id"], "<ButtonRelease-1>", end_drag)
     def load_icon(self, name, size):
-        """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
-        Поддерживает имена вида Name.png, Name (1).png, Name (2).png.
-        """
         cache_key = f"{name}_{size[0]}x{size[1]}"
         if cache_key in self._icons:
             return self._icons[cache_key]
