@@ -22,6 +22,8 @@ class IDEF0App:
         self.pan_start_x = 0
         self.pan_start_y = 0
         self.selected_block = None  # текущий выбранный блок
+        self.dragging_block = None  # блок, который сейчас перетаскивается
+        self.current_mode = "select"  # режим работы: "select" или "pan"
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -225,7 +227,7 @@ class IDEF0App:
             btn.image = icon
 
             if icon_name == "MousePointer2":
-                btn.configure(command=self.disable_pan_mode)
+                btn.configure(command=self.enable_select_mode)
 
             if icon_name == "Hand":
                 btn.configure(command=self.enable_pan_mode)
@@ -236,6 +238,22 @@ class IDEF0App:
 
             self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
             btn.pack(pady=8)
+
+    def enable_select_mode(self):
+        """Включает режим выбора элементов"""
+        if self.current_mode != "select":
+            self.current_mode = "select"
+            self.is_panning = False
+            self.canvas.configure(cursor="")
+            print("Включен режим выбора")
+
+    def enable_pan_mode(self):
+        """Включает режим панорамирования"""
+        if self.current_mode != "pan":
+            self.current_mode = "pan"
+            self.is_panning = True
+            self.canvas.configure(cursor="hand2")
+            print("Включен режим панорамирования")
 
     def add_new_block(self):
         """Добавляет новый блок на холст с базовыми значениями"""
@@ -307,16 +325,26 @@ class IDEF0App:
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
-            if self.is_panning == False:
-                block_data["drag_data"] = {"x": event.x, "y": event.y}
-                # Выбираем блок при начале перетаскивания
-                self.select_block(block_data)
+            if self.current_mode == "select":
+                # Преобразуем координаты мыши в координаты холста
+                x = self.canvas.canvasx(event.x)
+                y = self.canvas.canvasy(event.y)
+                block_data["drag_data"] = {"x": x, "y": y}
+                self.dragging_block = block_data
+                # Останавливаем распространение события
+                return "break"
 
         def drag(event):
-            if "drag_data" in block_data:
+            if (self.current_mode == "select" and 
+                self.dragging_block == block_data and 
+                "drag_data" in block_data):
+                # Преобразуем координаты мыши в координаты холста
+                x = self.canvas.canvasx(event.x)
+                y = self.canvas.canvasy(event.y)
+                
                 # Вычисляем смещение
-                dx = event.x - block_data["drag_data"]["x"]
-                dy = event.y - block_data["drag_data"]["y"]
+                dx = x - block_data["drag_data"]["x"]
+                dy = y - block_data["drag_data"]["y"]
 
                 # Обновляем позицию блока в модели
                 block_data["model"].x += dx
@@ -327,23 +355,33 @@ class IDEF0App:
                 self.canvas.move(block_data["text_id"], dx, dy)
 
                 # Обновляем данные о перетаскивании
-                block_data["drag_data"] = {"x": event.x, "y": event.y}
+                block_data["drag_data"] = {"x": x, "y": y}
 
                 # Обновляем свойства позиции
                 if self.selected_block == block_data:
                     self.properties_panel.update_properties(block_data["model"])
+                
+                # Останавливаем распространение события
+                return "break"
 
         def end_drag(event):
-            if "drag_data" in block_data:
+            if self.dragging_block == block_data and "drag_data" in block_data:
                 del block_data["drag_data"]
+                self.dragging_block = None
                 print(f"Блок {block_data['id']} перемещен в ({block_data['model'].x:.1f}, {block_data['model'].y:.1f})")
+
+        def double_click(event):
+            """Обработчик двойного клика для выбора блока"""
+            if self.current_mode == "select":
+                self.select_block(block_data)
+                return "break"
 
         # Привязываем обработчики событий
         for item_id in [block_data["rect_id"], block_data["text_id"]]:
             self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
             self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
             self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
-            self.canvas.tag_bind(item_id, "<Button-1>", lambda e, b=block_data: self.select_block(b))
+            self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
@@ -463,52 +501,52 @@ class IDEF0App:
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
 
         # Привязка к событиям клавиатуры
-        self.canvas.bind_all("<KeyPress-space>", self.enable_pan_mode)
-        self.canvas.bind_all("<KeyRelease-space>", self.disable_pan_mode)
+        self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
+        self.canvas.bind_all("<KeyRelease-space>", self.on_space_release)
 
         # Обработчик клика по пустому месту для сброса выделения
         self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+
+    def on_space_press(self, event):
+        """Обработчик нажатия пробела - временное включение панорамирования"""
+        if self.current_mode == "select":
+            self.canvas.configure(cursor="hand2")
+            self.is_panning = True
+
+    def on_space_release(self, event):
+        """Обработчик отпускания пробела - возврат к предыдущему режиму"""
+        if self.current_mode == "select":
+            self.canvas.configure(cursor="")
+            self.is_panning = False
 
     def on_canvas_click(self, event):
-        """Обработчик клика по холсту (сброс выделения)"""
-        # Проверяем, был ли клик по блоку
-        items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
-        block_clicked = False
-        for item in items:
-            tags = self.canvas.gettags(item)
-            if "block" in tags:
-                block_clicked = True
-                break
-        
-        # Если клик был не по блоку - сбрасываем выделение
-        if not block_clicked:
-            if self.selected_block:
-                self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
-                self.selected_block = None
-                self.properties_panel.update_properties(None)
-                print("Сброс выделения")
-
-    def enable_pan_mode(self, event=None):
-        """Включает режим панорамирования при нажатии пробела"""
-        if not self.is_panning:
-            self.is_panning = True
-            self.canvas.configure(cursor="hand2")
-            
-            self.canvas.bind("<ButtonPress-1>", self.pan_start)
-            self.canvas.bind("<B1-Motion>", self.pan_move)
-            self.canvas.bind("<ButtonRelease-1>", self.pan_end)
-            print(f"вошел в режим панорамирование")
-    
-    def disable_pan_mode(self, event=None):
-        """Отключает режим панорамирования при отпускании пробела"""
+        """Обработчик клика по холсту"""
         if self.is_panning:
-            self.is_panning = False
-            self.canvas.configure(cursor="")
+            # Если включено панорамирование (пробел зажат), начинаем панорамирование
+            self.canvas.scan_mark(event.x, event.y)
+        else:
+            # Если не панорамирование, проверяем клик по блоку
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            block_clicked = False
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "block" in tags:
+                    block_clicked = True
+                    break
             
-            self.canvas.unbind("<ButtonPress-1>")
-            self.canvas.unbind("<B1-Motion>")
-            self.canvas.unbind("<ButtonRelease-1>")
-            print(f"вышел из режима панорамирование")
+            # Если клик был не по блоку - сбрасываем выделение
+            if not block_clicked:
+                if self.selected_block:
+                    self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+                    self.selected_block = None
+                    self.properties_panel.update_properties(None)
+                    print("Сброс выделения")
+
+    def on_canvas_release(self, event):
+        """Обработчик отпускания кнопки мыши на холсте"""
+        # Сбрасываем перетаскиваемый блок
+        self.dragging_block = None
 
     def pan_start(self, event):
         """Запоминаем точку начала панорамирования"""
@@ -516,7 +554,8 @@ class IDEF0App:
 
     def pan_move(self, event):
         """Перемещаем холст"""
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+        if self.is_panning:
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def pan_end(self, event):
         """Финализируем перемещение"""
