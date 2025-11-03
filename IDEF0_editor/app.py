@@ -28,6 +28,7 @@ class IDEF0App:
         self.drag_preview = None  # превью перетаскиваемого блока
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 8  # размер маркеров изменения размера
+        self.resize_preview = None  # превью растягивания
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -419,35 +420,39 @@ class IDEF0App:
         """Начало изменения размера"""
         if self.current_mode == "select":
             self.resizing_block = block_data
-            # Преобразуем координаты мыши в координаты холста
-            x = self.canvas.canvasx(event.x)
-            y = self.canvas.canvasy(event.y)
+            # Создаем превью для растягивания
+            model = block_data["model"]
+            self.resize_preview = self.canvas.create_rectangle(
+                model.x - model.width/2, model.y - model.height/2,
+                model.x + model.width/2, model.y + model.height/2,
+                fill=model.color,
+                outline=Colors.PRIMARY,
+                width=2,
+                dash=(4, 2),
+                tags="resize_preview"
+            )
+            
             block_data["resize_data"] = {
                 "handle_type": handle_type,
-                "start_x": x,
-                "start_y": y,
-                "start_width": block_data["model"].width,
-                "start_height": block_data["model"].height,
-                "start_center_x": block_data["model"].x,
-                "start_center_y": block_data["model"].y
+                "start_x": event.x,
+                "start_y": event.y,
+                "start_width": model.width,
+                "start_height": model.height,
+                "start_center_x": model.x,
+                "start_center_y": model.y
             }
             return "break"
 
     def do_resize(self, event, block_data, handle_type):
-        """Изменение размера блока"""
-        if self.resizing_block == block_data and "resize_data" in block_data:
+        """Изменение размера блока (пока только превью)"""
+        if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
             resize_data = block_data["resize_data"]
-            model = block_data["model"]
             
-            # Преобразуем координаты мыши в координаты холста
-            current_x = self.canvas.canvasx(event.x)
-            current_y = self.canvas.canvasy(event.y)
+            # Вычисляем смещение
+            dx = event.x - resize_data["start_x"]
+            dy = event.y - resize_data["start_y"]
             
-            # Вычисляем смещение от начальной точки
-            dx = current_x - resize_data["start_x"]
-            dy = current_y - resize_data["start_y"]
-            
-            # Вычисляем новые размеры и позицию в зависимости от типа маркера
+            # Вычисляем новые размеры и позицию
             new_width = resize_data["start_width"]
             new_height = resize_data["start_height"]
             new_center_x = resize_data["start_center_x"]
@@ -464,35 +469,62 @@ class IDEF0App:
                 new_height = max(30, resize_data["start_height"] - dy)
                 new_center_y = resize_data["start_center_y"] + dy / 2
             
-            # Обновляем модель
+            # Обновляем превью
+            x1 = new_center_x - new_width / 2
+            y1 = new_center_y - new_height / 2
+            x2 = new_center_x + new_width / 2
+            y2 = new_center_y + new_height / 2
+            self.canvas.coords(self.resize_preview, x1, y1, x2, y2)
+            
+            return "break"
+
+    def end_resize(self, event, block_data):
+        """Завершение изменения размера - применяем изменения"""
+        if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
+            resize_data = block_data["resize_data"]
+            model = block_data["model"]
+            
+            # Вычисляем финальные размеры
+            dx = event.x - resize_data["start_x"]
+            dy = event.y - resize_data["start_y"]
+            
+            new_width = resize_data["start_width"]
+            new_height = resize_data["start_height"]
+            new_center_x = resize_data["start_center_x"]
+            new_center_y = resize_data["start_center_y"]
+            
+            if "e" in resize_data["handle_type"]:
+                new_width = max(50, resize_data["start_width"] + dx)
+            if "w" in resize_data["handle_type"]:
+                new_width = max(50, resize_data["start_width"] - dx)
+                new_center_x = resize_data["start_center_x"] + dx / 2
+            if "s" in resize_data["handle_type"]:
+                new_height = max(30, resize_data["start_height"] + dy)
+            if "n" in resize_data["handle_type"]:
+                new_height = max(30, resize_data["start_height"] - dy)
+                new_center_y = resize_data["start_center_y"] + dy / 2
+            
+            # Применяем изменения к модели
             model.width = new_width
             model.height = new_height
             model.x = new_center_x
             model.y = new_center_y
             
-            # Обновляем визуальное представление
-            self.update_block_visual(block_data)
+            # Удаляем превью
+            self.canvas.delete(self.resize_preview)
+            self.resize_preview = None
             
-            # Обновляем начальные координаты для следующего движения
-            resize_data["start_x"] = current_x
-            resize_data["start_y"] = current_y
-            resize_data["start_width"] = new_width
-            resize_data["start_height"] = new_height
-            resize_data["start_center_x"] = new_center_x
-            resize_data["start_center_y"] = new_center_y
+            # Обновляем визуальное представление блока
+            self.update_block_visual(block_data)
             
             # Обновляем свойства
             if self.selected_block == block_data:
                 self.properties_panel.update_properties(model)
             
-            return "break"
-
-    def end_resize(self, event, block_data):
-        """Завершение изменения размера"""
-        if self.resizing_block == block_data and "resize_data" in block_data:
             del block_data["resize_data"]
             self.resizing_block = None
-            print(f"Блок {block_data['id']} изменен до размера {block_data['model'].width}x{block_data['model'].height}")
+            
+            print(f"Блок {block_data['id']} изменен до размера {model.width}x{model.height}")
 
     def update_block_visual(self, block_data):
         """Обновляет визуальное представление блока"""
