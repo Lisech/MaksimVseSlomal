@@ -21,6 +21,7 @@ class IDEF0App:
         self.is_panning = False  # флаг режима панорамирования
         self.pan_start_x = 0
         self.pan_start_y = 0
+        self.selected_block = None  # текущий выбранный блок
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -179,8 +180,8 @@ class IDEF0App:
         self.setup_canvas(main_frame)
 
         # Properties panel
-        properties_panel = PropertiesPanel(main_frame)
-        properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+        self.properties_panel = PropertiesPanel(main_frame, on_properties_change=self.on_properties_change)
+        self.properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
 
     def setup_sidebar(self, parent):
         """Левая панель инструментов"""
@@ -254,11 +255,22 @@ class IDEF0App:
         block_id = f"block_{self.next_block_id}"
         self.next_block_id += 1
 
+        # Создаем модель блока
+        block_model = Block(
+            block_id=block_id,
+            name=f"Блок {self.next_block_id - 1}",
+            code=f"A{self.next_block_id - 1}",
+            x=x,
+            y=y,
+            width=width,
+            height=height
+        )
+
         # Рисуем прямоугольник
         rect = self.canvas.create_rectangle(
             x - width / 2, y - height / 2,
             x + width / 2, y + height / 2,
-            fill="#E3F2FD",  # голубой цвет как в models.py
+            fill=block_model.color,
             outline=Colors.TEXT_PRIMARY,
             width=2,
             tags=("block", block_id)
@@ -267,7 +279,7 @@ class IDEF0App:
         # Добавляем текст
         text = self.canvas.create_text(
             x, y,
-            text=f"Блок {self.next_block_id - 1}",
+            text=block_model.name,
             font=("Segoe UI", 10),
             justify="center",
             tags=("block_text", block_id)
@@ -276,31 +288,29 @@ class IDEF0App:
         # Сохраняем информацию о блоке
         block_data = {
             "id": block_id,
-            "x": x,
-            "y": y,
-            "width": width,
-            "height": height,
+            "model": block_model,
             "rect_id": rect,
-            "text_id": text,
-            "name": f"Блок {self.next_block_id - 1}",
-            "color": "#E3F2FD"
+            "text_id": text
         }
 
         self.blocks.append(block_data)
 
-        # Делаем блок перемещаемым
-        self.make_block_draggable(block_data)
+        # Делаем блок перемещаемым и выбираемым
+        self.make_block_interactive(block_data)
+
+        # Автоматически выбираем новый блок
+        self.select_block(block_data)
 
         print(f"Добавлен новый блок: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
 
-    def make_block_draggable(self, block_data):
-        """Делает блок перемещаемым по холсту"""
-
+    def make_block_interactive(self, block_data):
+        """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
-            # Запоминаем начальные координаты
             if self.is_panning == False:
                 block_data["drag_data"] = {"x": event.x, "y": event.y}
+                # Выбираем блок при начале перетаскивания
+                self.select_block(block_data)
 
         def drag(event):
             if "drag_data" in block_data:
@@ -308,9 +318,9 @@ class IDEF0App:
                 dx = event.x - block_data["drag_data"]["x"]
                 dy = event.y - block_data["drag_data"]["y"]
 
-                # Обновляем позицию блока
-                block_data["x"] += dx
-                block_data["y"] += dy
+                # Обновляем позицию блока в модели
+                block_data["model"].x += dx
+                block_data["model"].y += dy
 
                 # Перемещаем прямоугольник и текст
                 self.canvas.move(block_data["rect_id"], dx, dy)
@@ -319,19 +329,68 @@ class IDEF0App:
                 # Обновляем данные о перетаскивании
                 block_data["drag_data"] = {"x": event.x, "y": event.y}
 
+                # Обновляем свойства позиции
+                if self.selected_block == block_data:
+                    self.properties_panel.update_properties(block_data["model"])
+
         def end_drag(event):
             if "drag_data" in block_data:
                 del block_data["drag_data"]
-                print(f"Блок {block_data['id']} перемещен в ({block_data['x']:.1f}, {block_data['y']:.1f})")
+                print(f"Блок {block_data['id']} перемещен в ({block_data['model'].x:.1f}, {block_data['model'].y:.1f})")
 
         # Привязываем обработчики событий
-        self.canvas.tag_bind(block_data["rect_id"], "<ButtonPress-1>", start_drag)
-        self.canvas.tag_bind(block_data["rect_id"], "<B1-Motion>", drag)
-        self.canvas.tag_bind(block_data["rect_id"], "<ButtonRelease-1>", end_drag)
+        for item_id in [block_data["rect_id"], block_data["text_id"]]:
+            self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
+            self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
+            self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
+            self.canvas.tag_bind(item_id, "<Button-1>", lambda e, b=block_data: self.select_block(b))
 
-        self.canvas.tag_bind(block_data["text_id"], "<ButtonPress-1>", start_drag)
-        self.canvas.tag_bind(block_data["text_id"], "<B1-Motion>", drag)
-        self.canvas.tag_bind(block_data["text_id"], "<ButtonRelease-1>", end_drag)
+    def select_block(self, block_data):
+        """Выбирает блок и обновляет панель свойств"""
+        # Сбрасываем выделение предыдущего блока
+        if self.selected_block:
+            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+        
+        # Выделяем новый блок
+        self.selected_block = block_data
+        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        
+        # Обновляем панель свойств
+        self.properties_panel.update_properties(block_data["model"])
+        
+        print(f"Выбран блок: {block_data['id']}")
+
+    def on_properties_change(self, block, update_data):
+        """Обработчик изменений в свойствах блока"""
+        # Обновляем модель блока
+        block.update_from_dict(update_data)
+        
+        # Находим визуальное представление блока
+        block_data = next((b for b in self.blocks if b["model"] == block), None)
+        if block_data:
+            # Обновляем визуальное представление
+            if "name" in update_data:
+                self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
+            
+            if "color" in update_data:
+                self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
+            
+            if any(key in update_data for key in ["x", "y", "width", "height"]):
+                # Перерисовываем блок с новыми размерами/позицией
+                x1 = block.x - block.width / 2
+                y1 = block.y - block.height / 2
+                x2 = block.x + block.width / 2
+                y2 = block.y + block.height / 2
+                
+                self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
+                self.canvas.coords(block_data["text_id"], block.x, block.y)
+            
+            # ВАЖНО: Обновляем обводку выбранного элемента
+            if self.selected_block == block_data:
+                # Устанавливаем выделенную обводку для выбранного элемента
+                self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+            
+        print(f"Обновлен блок {block_data['id']}: {update_data}")
 
     def load_icon(self, name, size):
         """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
@@ -407,6 +466,28 @@ class IDEF0App:
         self.canvas.bind_all("<KeyPress-space>", self.enable_pan_mode)
         self.canvas.bind_all("<KeyRelease-space>", self.disable_pan_mode)
 
+        # Обработчик клика по пустому месту для сброса выделения
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+
+    def on_canvas_click(self, event):
+        """Обработчик клика по холсту (сброс выделения)"""
+        # Проверяем, был ли клик по блоку
+        items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+        block_clicked = False
+        for item in items:
+            tags = self.canvas.gettags(item)
+            if "block" in tags:
+                block_clicked = True
+                break
+        
+        # Если клик был не по блоку - сбрасываем выделение
+        if not block_clicked:
+            if self.selected_block:
+                self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+                self.selected_block = None
+                self.properties_panel.update_properties(None)
+                print("Сброс выделения")
+
     def enable_pan_mode(self, event=None):
         """Включает режим панорамирования при нажатии пробела"""
         if not self.is_panning:
@@ -469,75 +550,6 @@ class IDEF0App:
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
         for i in range(top, bottom, 100):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
-
-    def draw_a0_block(self):
-        """Рисует центральный A0 блок"""
-        x, y = 400, 300
-        width, height = 150, 80
-
-        # Main block
-        self.canvas.create_rectangle(
-            x - width/2, y - height/2,
-            x + width/2, y + height/2,
-            fill=Colors.SURFACE,
-            outline=Colors.TEXT_PRIMARY,
-            width=2
-        )
-
-        # Text
-        self.canvas.create_text(
-            x, y,
-            text="Основная\nдеятельность",
-            font=("Segoe UI", 10),
-            justify="center"
-        )
-
-    def draw_labels_and_arrows(self):
-        """Рисует метки и стрелки вокруг A0 блока"""
-        x, y = 400, 300
-        width, height = 150, 80
-
-        # Labels
-        labels = [
-            (x, y - height/2 - 20, "Управление", "top"),
-            (x - width/2 - 28, y, "Вход", "left"),
-            (x, y + height/2 + 20, "Механизм", "bottom"),
-            (x + width/2 + 42, y, ">Выход", "right"),
-            (x + width/2 + 10, y + height/2 + 16, "A0", "a0")
-        ]
-
-        for label_x, label_y, text, position in labels:
-            angle = 0
-            if position == "left":
-                angle = 90
-
-            self.canvas.create_text(
-                label_x, label_y,
-                text=text,
-                font=("Segoe UI", 9),
-                fill=Colors.TEXT_SECONDARY,
-                angle=angle
-            )
-
-        # Right arrow
-        arrow_start_x = x + width/2
-        arrow_end_x = x + width/2 + 34
-
-        self.canvas.create_line(
-            arrow_start_x, y,
-            arrow_end_x, y,
-            fill=Colors.TEXT_PRIMARY,
-            width=2
-        )
-
-        # Arrow head
-        self.canvas.create_polygon(
-            arrow_end_x, y,
-            arrow_end_x - 8, y - 6,
-            arrow_end_x - 8, y + 6,
-            fill=Colors.TEXT_PRIMARY,
-            outline=Colors.TEXT_PRIMARY
-        )
     
     def run(self):
         """Запуск приложения"""
