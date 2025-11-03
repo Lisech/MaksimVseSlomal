@@ -19,6 +19,9 @@ class PropertiesPanel(tk.Frame):
         # Ссылки на виджеты для обновления
         self.fields = {}
         
+        # Текущая толщина границы
+        self.current_border_width = 2
+        
         self.setup_ui()
 
     def setup_ui(self):
@@ -123,8 +126,69 @@ class PropertiesPanel(tk.Frame):
             self.color_swatches[color] = swatch
 
         # Толщина границы
-        self.create_select_field(card, "Толщина границы", "border_width",
-                               ["1px", "2px", "3px", "4px"])
+        border_frame = tk.Frame(card, bg=Colors.SURFACE)
+        border_frame.pack(fill=tk.X, padx=14, pady=(0, 12))
+
+        tk.Label(
+            border_frame,
+            text="Толщина границы",
+            font=Fonts.SMALL,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_SECONDARY
+        ).pack(anchor="w")
+
+        # Контейнер для элементов управления толщиной
+        border_controls_frame = tk.Frame(border_frame, bg=Colors.SURFACE)
+        border_controls_frame.pack(fill=tk.X, pady=(5, 0))
+
+        # Кнопка уменьшения
+        self.border_minus_btn = tk.Button(
+            border_controls_frame,
+            text="-",
+            font=("Segoe UI", 12, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            width=3,
+            height=1,
+            activebackground="#e2e8f0",
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=lambda: self.change_border_width(-1)
+        )
+        self.border_minus_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self.apply_hover_effect(self.border_minus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+
+        # Отображение текущей толщины
+        self.border_width_label = tk.Label(
+            border_controls_frame,
+            text="2px",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            width=6
+        )
+        self.border_width_label.pack(side=tk.LEFT, padx=4)
+
+        # Кнопка увеличения
+        self.border_plus_btn = tk.Button(
+            border_controls_frame,
+            text="+",
+            font=("Segoe UI", 12, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            width=3,
+            height=1,
+            activebackground="#e2e8f0",
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=lambda: self.change_border_width(1)
+        )
+        self.border_plus_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.apply_hover_effect(self.border_plus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
 
     def create_card(self, parent, title):
         """Создает карточку с заголовком"""
@@ -261,6 +325,19 @@ class PropertiesPanel(tk.Frame):
         # Сохраняем ссылку на поле
         self.fields[field_name] = entry
 
+    def change_border_width(self, delta):
+        """Изменение толщины границы"""
+        new_width = self.current_border_width + delta
+        # Ограничиваем диапазон от 1 до 10 пикселей
+        if 1 <= new_width <= 10:
+            self.current_border_width = new_width
+            self.border_width_label.config(text=f"{new_width}px")
+            
+            # Отправляем изменение в блок
+            if self.current_block and self.on_properties_change:
+                update_data = {"border_width": new_width}
+                self.on_properties_change(self.current_block, update_data)
+
     def on_field_changed(self, field_name, value):
         """Обработчик изменения значения в поле"""
         if self.current_block and self.on_properties_change:
@@ -289,6 +366,15 @@ class PropertiesPanel(tk.Frame):
                 else:
                     swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
 
+    def apply_hover_effect(self, widget, base_bg, hover_bg):
+        """Базовый ховер-эффект - только смена цвета"""
+        def on_enter(_):
+            widget.configure(bg=hover_bg)
+        def on_leave(_):
+            widget.configure(bg=base_bg)
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
     def update_properties(self, block):
         """Обновляет панель свойств для выбранного блока"""
         self.current_block = block
@@ -315,6 +401,10 @@ class PropertiesPanel(tk.Frame):
                 elif field_name == "height":
                     entry.insert(0, "80")
             
+            # Сбрасываем толщину границы
+            self.current_border_width = 2
+            self.border_width_label.config(text="2px")
+            
             # Сбрасываем выделение цветов
             for swatch in self.color_swatches.values():
                 swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
@@ -326,6 +416,11 @@ class PropertiesPanel(tk.Frame):
             if field_name in block_data:
                 entry.delete(0, tk.END)
                 entry.insert(0, str(block_data[field_name]))
+        
+        # Обновляем толщину границы
+        if "border_width" in block_data:
+            self.current_border_width = block_data["border_width"]
+            self.border_width_label.config(text=f"{self.current_border_width}px")
         
         # Подсвечиваем выбранный цвет - ВАЖНО: делаем это сразу
         current_color = block_data.get("color", "#E3F2FD")

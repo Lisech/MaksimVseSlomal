@@ -322,13 +322,14 @@ class IDEF0App:
 
         # Рисуем прямоугольник
         rect = self.canvas.create_rectangle(
-            x - width / 2, y - height / 2,
-            x + width / 2, y + height / 2,
-            fill=block_model.color,
-            outline=Colors.TEXT_PRIMARY,
-            width=2,
-            tags=("block", block_id)
+        x - width / 2, y - height / 2,
+        x + width / 2, y + height / 2,
+        fill=block_model.color,
+        outline=Colors.TEXT_PRIMARY,
+        width=block_model.border_width,  # ← использовать border_width из модели
+        tags=("block", block_id)
         )
+        
 
         # Добавляем текст
         text = self.canvas.create_text(
@@ -644,13 +645,16 @@ class IDEF0App:
             if "color" in update_data:
                 self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
             
+            if "border_width" in update_data:
+                self.canvas.itemconfig(block_data["rect_id"], width=update_data["border_width"])
+            
             if any(key in update_data for key in ["x", "y", "width", "height"]):
                 self.update_block_visual(block_data)
             
             # ВАЖНО: Обновляем обводку выбранного элемента
             if self.selected_block == block_data:
                 # Устанавливаем выделенную обводку для выбранного элемента
-                self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+                self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=block.border_width)
                 # Обновляем маркеры изменения размера
                 self.create_resize_handles(block_data)
             
