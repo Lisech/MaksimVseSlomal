@@ -26,6 +26,8 @@ class IDEF0App:
         self.current_mode = "select"  # режим работы: "select" или "pan"
         self.drag_from_sidebar = False  # флаг перетаскивания из панели
         self.drag_preview = None  # превью перетаскиваемого блока
+        self.resizing_block = None  # блок, который сейчас изменяется
+        self.resize_handle_size = 8  # размер маркеров изменения размера
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -341,7 +343,8 @@ class IDEF0App:
             "id": block_id,
             "model": block_model,
             "rect_id": rect,
-            "text_id": text
+            "text_id": text,
+            "resize_handles": {}  # маркеры изменения размера
         }
 
         self.blocks.append(block_data)
@@ -370,6 +373,144 @@ class IDEF0App:
             self.is_panning = True
             self.canvas.configure(cursor="hand2")
             print("Включен режим панорамирования")
+
+    def create_resize_handles(self, block_data):
+        """Создает маркеры для изменения размера блока"""
+        # Удаляем старые маркеры
+        self.delete_resize_handles(block_data)
+        
+        model = block_data["model"]
+        size = self.resize_handle_size
+        
+        # Угловые маркеры
+        handles_positions = {
+            "nw": (model.x - model.width/2, model.y - model.height/2),
+            "ne": (model.x + model.width/2, model.y - model.height/2),
+            "sw": (model.x - model.width/2, model.y + model.height/2),
+            "se": (model.x + model.width/2, model.y + model.height/2)
+        }
+        
+        for handle_type, (x, y) in handles_positions.items():
+            handle = self.canvas.create_rectangle(
+                x - size/2, y - size/2,
+                x + size/2, y + size/2,
+                fill=Colors.PRIMARY,
+                outline=Colors.SURFACE,
+                width=1,
+                tags=("resize_handle", block_data["id"], f"handle_{handle_type}")
+            )
+            block_data["resize_handles"][handle_type] = handle
+            
+            # Привязываем обработчики событий для маркера
+            self.canvas.tag_bind(handle, "<ButtonPress-1>", 
+                               lambda e, b=block_data, h=handle_type: self.start_resize(e, b, h))
+            self.canvas.tag_bind(handle, "<B1-Motion>", 
+                               lambda e, b=block_data, h=handle_type: self.do_resize(e, b, h))
+            self.canvas.tag_bind(handle, "<ButtonRelease-1>", 
+                               lambda e, b=block_data: self.end_resize(e, b))
+
+    def delete_resize_handles(self, block_data):
+        """Удаляет маркеры изменения размера"""
+        for handle_id in block_data["resize_handles"].values():
+            self.canvas.delete(handle_id)
+        block_data["resize_handles"] = {}
+
+    def start_resize(self, event, block_data, handle_type):
+        """Начало изменения размера"""
+        if self.current_mode == "select":
+            self.resizing_block = block_data
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            block_data["resize_data"] = {
+                "handle_type": handle_type,
+                "start_x": x,
+                "start_y": y,
+                "start_width": block_data["model"].width,
+                "start_height": block_data["model"].height,
+                "start_center_x": block_data["model"].x,
+                "start_center_y": block_data["model"].y
+            }
+            return "break"
+
+    def do_resize(self, event, block_data, handle_type):
+        """Изменение размера блока"""
+        if self.resizing_block == block_data and "resize_data" in block_data:
+            resize_data = block_data["resize_data"]
+            model = block_data["model"]
+            
+            # Преобразуем координаты мыши в координаты холста
+            current_x = self.canvas.canvasx(event.x)
+            current_y = self.canvas.canvasy(event.y)
+            
+            # Вычисляем смещение от начальной точки
+            dx = current_x - resize_data["start_x"]
+            dy = current_y - resize_data["start_y"]
+            
+            # Вычисляем новые размеры и позицию в зависимости от типа маркера
+            new_width = resize_data["start_width"]
+            new_height = resize_data["start_height"]
+            new_center_x = resize_data["start_center_x"]
+            new_center_y = resize_data["start_center_y"]
+            
+            if "e" in handle_type:  # правые маркеры
+                new_width = max(50, resize_data["start_width"] + dx)
+            if "w" in handle_type:  # левые маркеры
+                new_width = max(50, resize_data["start_width"] - dx)
+                new_center_x = resize_data["start_center_x"] + dx / 2
+            if "s" in handle_type:  # нижние маркеры
+                new_height = max(30, resize_data["start_height"] + dy)
+            if "n" in handle_type:  # верхние маркеры
+                new_height = max(30, resize_data["start_height"] - dy)
+                new_center_y = resize_data["start_center_y"] + dy / 2
+            
+            # Обновляем модель
+            model.width = new_width
+            model.height = new_height
+            model.x = new_center_x
+            model.y = new_center_y
+            
+            # Обновляем визуальное представление
+            self.update_block_visual(block_data)
+            
+            # Обновляем начальные координаты для следующего движения
+            resize_data["start_x"] = current_x
+            resize_data["start_y"] = current_y
+            resize_data["start_width"] = new_width
+            resize_data["start_height"] = new_height
+            resize_data["start_center_x"] = new_center_x
+            resize_data["start_center_y"] = new_center_y
+            
+            # Обновляем свойства
+            if self.selected_block == block_data:
+                self.properties_panel.update_properties(model)
+            
+            return "break"
+
+    def end_resize(self, event, block_data):
+        """Завершение изменения размера"""
+        if self.resizing_block == block_data and "resize_data" in block_data:
+            del block_data["resize_data"]
+            self.resizing_block = None
+            print(f"Блок {block_data['id']} изменен до размера {block_data['model'].width}x{block_data['model'].height}")
+
+    def update_block_visual(self, block_data):
+        """Обновляет визуальное представление блока"""
+        model = block_data["model"]
+        
+        # Обновляем прямоугольник
+        x1 = model.x - model.width / 2
+        y1 = model.y - model.height / 2
+        x2 = model.x + model.width / 2
+        y2 = model.y + model.height / 2
+        self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
+        
+        # Обновляем текст
+        self.canvas.coords(block_data["text_id"], model.x, model.y)
+        
+        # Обновляем маркеры изменения размера
+        if block_data == self.selected_block:
+            self.create_resize_handles(block_data)
 
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
@@ -402,6 +543,11 @@ class IDEF0App:
                 # Перемещаем прямоугольник и текст
                 self.canvas.move(block_data["rect_id"], dx, dy)
                 self.canvas.move(block_data["text_id"], dx, dy)
+
+                # Обновляем маркеры изменения размера
+                if block_data == self.selected_block:
+                    for handle_id in block_data["resize_handles"].values():
+                        self.canvas.move(handle_id, dx, dy)
 
                 # Обновляем данные о перетаскивании
                 block_data["drag_data"] = {"x": x, "y": y}
@@ -437,10 +583,14 @@ class IDEF0App:
         # Сбрасываем выделение предыдущего блока
         if self.selected_block:
             self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            self.delete_resize_handles(self.selected_block)
         
         # Выделяем новый блок
         self.selected_block = block_data
         self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        
+        # Создаем маркеры изменения размера
+        self.create_resize_handles(block_data)
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(block_data["model"])
@@ -463,19 +613,14 @@ class IDEF0App:
                 self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
             
             if any(key in update_data for key in ["x", "y", "width", "height"]):
-                # Перерисовываем блок с новыми размерами/позицией
-                x1 = block.x - block.width / 2
-                y1 = block.y - block.height / 2
-                x2 = block.x + block.width / 2
-                y2 = block.y + block.height / 2
-                
-                self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
-                self.canvas.coords(block_data["text_id"], block.x, block.y)
+                self.update_block_visual(block_data)
             
             # ВАЖНО: Обновляем обводку выбранного элемента
             if self.selected_block == block_data:
                 # Устанавливаем выделенную обводку для выбранного элемента
                 self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+                # Обновляем маркеры изменения размера
+                self.create_resize_handles(block_data)
             
         print(f"Обновлен блок {block_data['id']}: {update_data}")
 
@@ -576,19 +721,20 @@ class IDEF0App:
             # Если включено панорамирование (пробел зажат), начинаем панорамирование
             self.canvas.scan_mark(event.x, event.y)
         else:
-            # Если не панорамирование, проверяем клик по блоку
+            # Если не панорамирование, проверяем клик по блоку или маркеру
             items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
-            block_clicked = False
+            block_or_handle_clicked = False
             for item in items:
                 tags = self.canvas.gettags(item)
-                if "block" in tags:
-                    block_clicked = True
+                if "block" in tags or "resize_handle" in tags:
+                    block_or_handle_clicked = True
                     break
             
-            # Если клик был не по блоку - сбрасываем выделение
-            if not block_clicked:
+            # Если клик был не по блоку или маркеру - сбрасываем выделение
+            if not block_or_handle_clicked:
                 if self.selected_block:
                     self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+                    self.delete_resize_handles(self.selected_block)
                     self.selected_block = None
                     self.properties_panel.update_properties(None)
                     print("Сброс выделения")
@@ -597,6 +743,8 @@ class IDEF0App:
         """Обработчик отпускания кнопки мыши на холсте"""
         # Сбрасываем перетаскиваемый блок
         self.dragging_block = None
+        # Сбрасываем изменение размера
+        self.resizing_block = None
 
     def pan_move(self, event):
         """Перемещаем холст"""

@@ -67,7 +67,7 @@ class PropertiesPanel(tk.Frame):
         row2 = tk.Frame(card, bg=Colors.SURFACE)
         row2.pack(fill=tk.X, padx=14)
 
-        self.create_small_field(row2, "Ширина", "width", "120", 0)
+        self.create_small_field(row2, "Ширина", "width", "150", 0)
         self.create_small_field(row2, "Высота", "height", "80", 1)
 
     def create_style_card(self, parent):
@@ -264,6 +264,13 @@ class PropertiesPanel(tk.Frame):
     def on_field_changed(self, field_name, value):
         """Обработчик изменения значения в поле"""
         if self.current_block and self.on_properties_change:
+            # Для числовых полей преобразуем значение
+            if field_name in ["x", "y", "width", "height"]:
+                try:
+                    value = float(value)
+                except ValueError:
+                    return  # Неправильное числовое значение, игнорируем
+            
             # Обновляем данные в текущем блоке
             update_data = {field_name: value}
             self.on_properties_change(self.current_block, update_data)
@@ -304,7 +311,7 @@ class PropertiesPanel(tk.Frame):
                 elif field_name == "y":
                     entry.insert(0, "150")
                 elif field_name == "width":
-                    entry.insert(0, "120")
+                    entry.insert(0, "150")
                 elif field_name == "height":
                     entry.insert(0, "80")
             
