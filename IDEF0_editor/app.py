@@ -1,4 +1,3 @@
-
 """
 Чистый макет приложения - точная копия HTML макета
 Все кнопки с заглушками
@@ -19,6 +18,7 @@ class IDEF0App:
         self.setup_ui()
         self.blocks = []
         self.next_block_id = 1
+        self.is_panning = False  # флаг режима панорамирования
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -221,6 +221,12 @@ class IDEF0App:
             btn.configure(image=icon, compound='center', padx=16, pady=16)
             btn.image = icon
 
+            if icon_name == "MousePointer2":
+                btn.configure(command=self.disable_pan_mode)
+
+            if icon_name == "Hand":
+                btn.configure(command=self.enable_pan_mode)
+
             # Привязываем обработчик для кнопки добавления блока
             if icon_name == "Square":
                 btn.configure(command=self.add_new_block)
@@ -289,7 +295,8 @@ class IDEF0App:
 
         def start_drag(event):
             # Запоминаем начальные координаты
-            block_data["drag_data"] = {"x": event.x, "y": event.y}
+            if self.is_panning == False:
+                block_data["drag_data"] = {"x": event.x, "y": event.y}
 
         def drag(event):
             if "drag_data" in block_data:
@@ -385,6 +392,44 @@ class IDEF0App:
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
 
+        # Привязка к событиям клавиатуры
+        self.canvas.bind_all("<KeyPress-space>", self.enable_pan_mode)
+        self.canvas.bind_all("<KeyRelease-space>", self.disable_pan_mode)
+
+    def enable_pan_mode(self, event=None):
+        """Включает режим панорамирования при нажатии пробела"""
+        if not self.is_panning:
+            self.is_panning = True
+            self.canvas.configure(cursor="hand2")
+            
+            self.canvas.bind("<ButtonPress-1>", self.pan_start)
+            self.canvas.bind("<B1-Motion>", self.pan_move)
+            self.canvas.bind("<ButtonRelease-1>", self.pan_end)
+            print(f"вошел в режим панорамирование")
+    
+    def disable_pan_mode(self, event=None):
+        """Отключает режим панорамирования при отпускании пробела"""
+        if self.is_panning:
+            self.is_panning = False
+            self.canvas.configure(cursor="")
+            
+            self.canvas.unbind("<ButtonPress-1>")
+            self.canvas.unbind("<B1-Motion>")
+            self.canvas.unbind("<ButtonRelease-1>")
+            print(f"вышел из режима панорамирование")
+
+    def pan_start(self, event):
+        """Запоминаем точку начала панорамирования"""
+        self.canvas.scan_mark(event.x, event.y)
+
+    def pan_move(self, event):
+        """Перемещаем холст"""
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def pan_end(self, event):
+        """Финализируем перемещение"""
+        pass
+
     def apply_hover_effect(self, widget, base_bg, hover_bg):
         """Базовый ховер-эффект - только смена цвета"""
         def on_enter(_):
@@ -394,9 +439,6 @@ class IDEF0App:
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
     
-    
-    
-
     def draw_grid(self):
         """Рисует сетку по текущему размеру канвы"""
         self.canvas.delete('grid')
