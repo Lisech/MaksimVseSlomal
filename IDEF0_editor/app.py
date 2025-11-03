@@ -1,4 +1,3 @@
-
 """
 Чистый макет приложения - точная копия HTML макета
 Все кнопки с заглушками
@@ -19,6 +18,9 @@ class IDEF0App:
         self.setup_ui()
         self.blocks = []
         self.next_block_id = 1
+        self.is_panning = False  # флаг режима панорамирования
+        self.pan_start_x = 0
+        self.pan_start_y = 0
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -221,6 +223,12 @@ class IDEF0App:
             btn.configure(image=icon, compound='center', padx=16, pady=16)
             btn.image = icon
 
+            if icon_name == "MousePointer2":
+                btn.configure(command=self.disable_pan_mode)
+
+            if icon_name == "Hand":
+                btn.configure(command=self.enable_pan_mode)
+
             # Привязываем обработчик для кнопки добавления блока
             if icon_name == "Square":
                 btn.configure(command=self.add_new_block)
@@ -230,12 +238,14 @@ class IDEF0App:
 
     def add_new_block(self):
         """Добавляет новый блок на холст с базовыми значениями"""
-        # Базовые координаты (центр видимой области)
+        # Получаем видимую область холста
+        canvas_x = self.canvas.canvasx(0)
+        canvas_y = self.canvas.canvasy(0)
         canvas_width = self.canvas.winfo_width()
         canvas_height = self.canvas.winfo_height()
 
-        x = canvas_width // 2 if canvas_width > 0 else 400
-        y = canvas_height // 2 if canvas_height > 0 else 300
+        x = canvas_x + canvas_width // 2 if canvas_width > 0 else 400
+        y = canvas_y + canvas_height // 2 if canvas_height > 0 else 300
 
         # Базовые размеры
         width, height = 150, 80
@@ -289,7 +299,8 @@ class IDEF0App:
 
         def start_drag(event):
             # Запоминаем начальные координаты
-            block_data["drag_data"] = {"x": event.x, "y": event.y}
+            if self.is_panning == False:
+                block_data["drag_data"] = {"x": event.x, "y": event.y}
 
         def drag(event):
             if "drag_data" in block_data:
@@ -360,18 +371,25 @@ class IDEF0App:
         )
         canvas_frame.grid(row=0, column=1, sticky="nsew", padx=12)
 
-        # Canvas
+        # Canvas с прокруткой
         self.canvas = tk.Canvas(
             canvas_frame,
             bg=Colors.SURFACE,
-            highlightthickness=0
+            highlightthickness=0,
+            scrollregion=(-2000, -2000, 4000, 4000)  # Большая область для панорамирования
         )
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Добавляем скроллбары
+        v_scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
+        h_scrollbar = tk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Размещаем элементы
+        h_scrollbar.pack(side="bottom", fill="x")
+        v_scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
 
-        # Перерисовывать сетку при изменении размера канвы
-        self.canvas.bind("<Configure>", self.on_canvas_resize)
-
-        # Draw only grid (убран тестовый элемент на сетке)
+        # Рисуем сетку на всей области холста
         self.draw_grid()
 
         # Footer note
@@ -385,6 +403,44 @@ class IDEF0App:
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
 
+        # Привязка к событиям клавиатуры
+        self.canvas.bind_all("<KeyPress-space>", self.enable_pan_mode)
+        self.canvas.bind_all("<KeyRelease-space>", self.disable_pan_mode)
+
+    def enable_pan_mode(self, event=None):
+        """Включает режим панорамирования при нажатии пробела"""
+        if not self.is_panning:
+            self.is_panning = True
+            self.canvas.configure(cursor="hand2")
+            
+            self.canvas.bind("<ButtonPress-1>", self.pan_start)
+            self.canvas.bind("<B1-Motion>", self.pan_move)
+            self.canvas.bind("<ButtonRelease-1>", self.pan_end)
+            print(f"вошел в режим панорамирование")
+    
+    def disable_pan_mode(self, event=None):
+        """Отключает режим панорамирования при отпускании пробела"""
+        if self.is_panning:
+            self.is_panning = False
+            self.canvas.configure(cursor="")
+            
+            self.canvas.unbind("<ButtonPress-1>")
+            self.canvas.unbind("<B1-Motion>")
+            self.canvas.unbind("<ButtonRelease-1>")
+            print(f"вышел из режима панорамирование")
+
+    def pan_start(self, event):
+        """Запоминаем точку начала панорамирования"""
+        self.canvas.scan_mark(event.x, event.y)
+
+    def pan_move(self, event):
+        """Перемещаем холст"""
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def pan_end(self, event):
+        """Финализируем перемещение"""
+        pass
+
     def apply_hover_effect(self, widget, base_bg, hover_bg):
         """Базовый ховер-эффект - только смена цвета"""
         def on_enter(_):
@@ -394,30 +450,25 @@ class IDEF0App:
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
     
-    
-    
-
     def draw_grid(self):
-        """Рисует сетку по текущему размеру канвы"""
+        """Рисует сетку по всей области холста"""
         self.canvas.delete('grid')
-        width = max(self.canvas.winfo_width(), 1)
-        height = max(self.canvas.winfo_height(), 1)
+        
+        # Рисуем сетку на всей области scrollregion
+        left, top, right, bottom = self.canvas.cget('scrollregion').split()
+        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         # Minor grid (20px) - более светлая
-        for i in range(0, width, 20):
-            self.canvas.create_line(i, 0, i, height, fill=Colors.GRID, width=1, tags='grid')
-        for i in range(0, height, 20):
-            self.canvas.create_line(0, i, width, i, fill=Colors.GRID, width=1, tags='grid')
+        for i in range(left, right, 20):
+            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID, width=1, tags='grid')
+        for i in range(top, bottom, 20):
+            self.canvas.create_line(left, i, right, i, fill=Colors.GRID, width=1, tags='grid')
 
         # Major grid (100px) - немного темнее
-        for i in range(0, width, 100):
-            self.canvas.create_line(i, 0, i, height, fill=Colors.GRID_STRONG, width=1, tags='grid')
-        for i in range(0, height, 100):
-            self.canvas.create_line(0, i, width, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
-
-    def on_canvas_resize(self, _event):
-        """Обработчик изменения размера канвы: перерасчёт сетки."""
-        self.draw_grid()
+        for i in range(left, right, 100):
+            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
+        for i in range(top, bottom, 100):
+            self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
 
     def draw_a0_block(self):
         """Рисует центральный A0 блок"""
