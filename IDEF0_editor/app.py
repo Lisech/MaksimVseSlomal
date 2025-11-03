@@ -19,6 +19,16 @@ class IDEF0App:
         self.blocks = []
         self.next_block_id = 1
         self.is_panning = False  # флаг режима панорамирования
+        self.pan_start_x = 0
+        self.pan_start_y = 0
+        self.selected_block = None  # текущий выбранный блок
+        self.dragging_block = None  # блок, который сейчас перетаскивается
+        self.current_mode = "select"  # режим работы: "select" или "pan"
+        self.drag_from_sidebar = False  # флаг перетаскивания из панели
+        self.drag_preview = None  # превью перетаскиваемого блока
+        self.resizing_block = None  # блок, который сейчас изменяется
+        self.resize_handle_size = 8  # размер маркеров изменения размера
+        self.resize_preview = None  # превью растягивания
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -177,8 +187,8 @@ class IDEF0App:
         self.setup_canvas(main_frame)
 
         # Properties panel
-        properties_panel = PropertiesPanel(main_frame)
-        properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+        self.properties_panel = PropertiesPanel(main_frame, on_properties_change=self.on_properties_change)
+        self.properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
 
     def setup_sidebar(self, parent):
         """Левая панель инструментов"""
@@ -222,27 +232,76 @@ class IDEF0App:
             btn.image = icon
 
             if icon_name == "MousePointer2":
-                btn.configure(command=self.disable_pan_mode)
+                btn.configure(command=self.enable_select_mode)
 
             if icon_name == "Hand":
                 btn.configure(command=self.enable_pan_mode)
 
-            # Привязываем обработчик для кнопки добавления блока
+            # Привязываем обработчики для кнопки добавления блока ТОЛЬКО drag-and-drop
             if icon_name == "Square":
-                btn.configure(command=self.add_new_block)
+                # Убираем команду клика, оставляем только drag-and-drop
+                btn.configure(command=None)
+                # Добавляем обработчики для drag-and-drop
+                btn.bind("<ButtonPress-1>", self.start_drag_from_sidebar)
+                btn.bind("<B1-Motion>", self.drag_from_sidebar)
+                btn.bind("<ButtonRelease-1>", self.end_drag_from_sidebar)
 
             self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
             btn.pack(pady=8)
 
-    def add_new_block(self):
-        """Добавляет новый блок на холст с базовыми значениями"""
-        # Базовые координаты (центр видимой области)
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
+    def start_drag_from_sidebar(self, event):
+        """Начало перетаскивания из панели инструментов"""
+        self.drag_from_sidebar = True
+        self.canvas.configure(cursor="crosshair")
+        
+        # Создаем превью блока
+        x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+        y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+        
+        width, height = 150, 80
+        self.drag_preview = self.canvas.create_rectangle(
+            x - width / 2, y - height / 2,
+            x + width / 2, y + height / 2,
+            fill="#E3F2FD",
+            outline=Colors.PRIMARY,
+            width=2,
+            dash=(4, 2),
+            tags="drag_preview"
+        )
 
-        x = canvas_width // 2 if canvas_width > 0 else 400
-        y = canvas_height // 2 if canvas_height > 0 else 300
+    def drag_from_sidebar(self, event):
+        """Перетаскивание из панели инструментов"""
+        if self.drag_from_sidebar and self.drag_preview:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            
+            width, height = 150, 80
+            # Обновляем позицию превью
+            self.canvas.coords(
+                self.drag_preview,
+                x - width / 2, y - height / 2,
+                x + width / 2, y + height / 2
+            )
 
+    def end_drag_from_sidebar(self, event):
+        """Завершение перетаскивания из панели инструментов"""
+        if self.drag_from_sidebar and self.drag_preview:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            
+            # Удаляем превью
+            self.canvas.delete(self.drag_preview)
+            self.drag_preview = None
+            self.drag_from_sidebar = False
+            self.canvas.configure(cursor="")
+            
+            # Создаем новый блок в точке отпускания
+            self.create_block_at_position(x, y)
+
+    def create_block_at_position(self, x, y):
+        """Создает блок в указанной позиции"""
         # Базовые размеры
         width, height = 150, 80
 
@@ -250,20 +309,32 @@ class IDEF0App:
         block_id = f"block_{self.next_block_id}"
         self.next_block_id += 1
 
+        # Создаем модель блока
+        block_model = Block(
+            block_id=block_id,
+            name=f"Блок {self.next_block_id - 1}",
+            code=f"A{self.next_block_id - 1}",
+            x=x,
+            y=y,
+            width=width,
+            height=height
+        )
+
         # Рисуем прямоугольник
         rect = self.canvas.create_rectangle(
-            x - width / 2, y - height / 2,
-            x + width / 2, y + height / 2,
-            fill="#E3F2FD",  # голубой цвет как в models.py
-            outline=Colors.TEXT_PRIMARY,
-            width=2,
-            tags=("block", block_id)
+        x - width / 2, y - height / 2,
+        x + width / 2, y + height / 2,
+        fill=block_model.color,
+        outline=Colors.TEXT_PRIMARY,
+        width=block_model.border_width,  # ← использовать border_width из модели
+        tags=("block", block_id)
         )
+        
 
         # Добавляем текст
         text = self.canvas.create_text(
             x, y,
-            text=f"Блок {self.next_block_id - 1}",
+            text=block_model.name,
             font=("Segoe UI", 10),
             justify="center",
             tags=("block_text", block_id)
@@ -272,62 +343,322 @@ class IDEF0App:
         # Сохраняем информацию о блоке
         block_data = {
             "id": block_id,
-            "x": x,
-            "y": y,
-            "width": width,
-            "height": height,
+            "model": block_model,
             "rect_id": rect,
             "text_id": text,
-            "name": f"Блок {self.next_block_id - 1}",
-            "color": "#E3F2FD"
+            "resize_handles": {}  # маркеры изменения размера
         }
 
         self.blocks.append(block_data)
 
-        # Делаем блок перемещаемым
-        self.make_block_draggable(block_data)
+        # Делаем блок перемещаемым и выбираемым
+        self.make_block_interactive(block_data)
 
-        print(f"Добавлен новый блок: {block_id}")
+        # Автоматически выбираем новый блок
+        self.select_block(block_data)
+
+        print(f"Добавлен новый блок через drag-and-drop: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
 
-    def make_block_draggable(self, block_data):
-        """Делает блок перемещаемым по холсту"""
+    def enable_select_mode(self):
+        """Включает режим выбора элементов"""
+        if self.current_mode != "select":
+            self.current_mode = "select"
+            self.is_panning = False
+            self.canvas.configure(cursor="")
+            print("Включен режим выбора")
 
+    def enable_pan_mode(self):
+        """Включает режим панорамирования"""
+        if self.current_mode != "pan":
+            self.current_mode = "pan"
+            self.is_panning = True
+            self.canvas.configure(cursor="hand2")
+            print("Включен режим панорамирования")
+
+    def create_resize_handles(self, block_data):
+        """Создает маркеры для изменения размера блока"""
+        # Удаляем старые маркеры
+        self.delete_resize_handles(block_data)
+        
+        model = block_data["model"]
+        size = self.resize_handle_size
+        
+        # Угловые маркеры
+        handles_positions = {
+            "nw": (model.x - model.width/2, model.y - model.height/2),
+            "ne": (model.x + model.width/2, model.y - model.height/2),
+            "sw": (model.x - model.width/2, model.y + model.height/2),
+            "se": (model.x + model.width/2, model.y + model.height/2)
+        }
+        
+        for handle_type, (x, y) in handles_positions.items():
+            handle = self.canvas.create_rectangle(
+                x - size/2, y - size/2,
+                x + size/2, y + size/2,
+                fill=Colors.PRIMARY,
+                outline=Colors.SURFACE,
+                width=1,
+                tags=("resize_handle", block_data["id"], f"handle_{handle_type}")
+            )
+            block_data["resize_handles"][handle_type] = handle
+            
+            # Привязываем обработчики событий для маркера
+            self.canvas.tag_bind(handle, "<ButtonPress-1>", 
+                               lambda e, b=block_data, h=handle_type: self.start_resize(e, b, h))
+            self.canvas.tag_bind(handle, "<B1-Motion>", 
+                               lambda e, b=block_data, h=handle_type: self.do_resize(e, b, h))
+            self.canvas.tag_bind(handle, "<ButtonRelease-1>", 
+                               lambda e, b=block_data: self.end_resize(e, b))
+
+    def delete_resize_handles(self, block_data):
+        """Удаляет маркеры изменения размера"""
+        for handle_id in block_data["resize_handles"].values():
+            self.canvas.delete(handle_id)
+        block_data["resize_handles"] = {}
+
+    def start_resize(self, event, block_data, handle_type):
+        """Начало изменения размера"""
+        if self.current_mode == "select":
+            self.resizing_block = block_data
+            # Создаем превью для растягивания
+            model = block_data["model"]
+            self.resize_preview = self.canvas.create_rectangle(
+                model.x - model.width/2, model.y - model.height/2,
+                model.x + model.width/2, model.y + model.height/2,
+                fill=model.color,
+                outline=Colors.PRIMARY,
+                width=2,
+                dash=(4, 2),
+                tags="resize_preview"
+            )
+            
+            block_data["resize_data"] = {
+                "handle_type": handle_type,
+                "start_x": event.x,
+                "start_y": event.y,
+                "start_width": model.width,
+                "start_height": model.height,
+                "start_center_x": model.x,
+                "start_center_y": model.y
+            }
+            return "break"
+
+    def do_resize(self, event, block_data, handle_type):
+        """Изменение размера блока (пока только превью)"""
+        if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
+            resize_data = block_data["resize_data"]
+            
+            # Вычисляем смещение
+            dx = event.x - resize_data["start_x"]
+            dy = event.y - resize_data["start_y"]
+            
+            # Вычисляем новые размеры и позицию
+            new_width = resize_data["start_width"]
+            new_height = resize_data["start_height"]
+            new_center_x = resize_data["start_center_x"]
+            new_center_y = resize_data["start_center_y"]
+            
+            if "e" in handle_type:  # правые маркеры
+                new_width = max(50, resize_data["start_width"] + dx)
+            if "w" in handle_type:  # левые маркеры
+                new_width = max(50, resize_data["start_width"] - dx)
+                new_center_x = resize_data["start_center_x"] + dx / 2
+            if "s" in handle_type:  # нижние маркеры
+                new_height = max(30, resize_data["start_height"] + dy)
+            if "n" in handle_type:  # верхние маркеры
+                new_height = max(30, resize_data["start_height"] - dy)
+                new_center_y = resize_data["start_center_y"] + dy / 2
+            
+            # Обновляем превью
+            x1 = new_center_x - new_width / 2
+            y1 = new_center_y - new_height / 2
+            x2 = new_center_x + new_width / 2
+            y2 = new_center_y + new_height / 2
+            self.canvas.coords(self.resize_preview, x1, y1, x2, y2)
+            
+            return "break"
+
+    def end_resize(self, event, block_data):
+        """Завершение изменения размера - применяем изменения"""
+        if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
+            resize_data = block_data["resize_data"]
+            model = block_data["model"]
+            
+            # Вычисляем финальные размеры
+            dx = event.x - resize_data["start_x"]
+            dy = event.y - resize_data["start_y"]
+            
+            new_width = resize_data["start_width"]
+            new_height = resize_data["start_height"]
+            new_center_x = resize_data["start_center_x"]
+            new_center_y = resize_data["start_center_y"]
+            
+            if "e" in resize_data["handle_type"]:
+                new_width = max(50, resize_data["start_width"] + dx)
+            if "w" in resize_data["handle_type"]:
+                new_width = max(50, resize_data["start_width"] - dx)
+                new_center_x = resize_data["start_center_x"] + dx / 2
+            if "s" in resize_data["handle_type"]:
+                new_height = max(30, resize_data["start_height"] + dy)
+            if "n" in resize_data["handle_type"]:
+                new_height = max(30, resize_data["start_height"] - dy)
+                new_center_y = resize_data["start_center_y"] + dy / 2
+            
+            # Применяем изменения к модели
+            model.width = new_width
+            model.height = new_height
+            model.x = new_center_x
+            model.y = new_center_y
+            
+            # Удаляем превью
+            self.canvas.delete(self.resize_preview)
+            self.resize_preview = None
+            
+            # Обновляем визуальное представление блока
+            self.update_block_visual(block_data)
+            
+            # Обновляем свойства
+            if self.selected_block == block_data:
+                self.properties_panel.update_properties(model)
+            
+            del block_data["resize_data"]
+            self.resizing_block = None
+            
+            print(f"Блок {block_data['id']} изменен до размера {model.width}x{model.height}")
+
+    def update_block_visual(self, block_data):
+        """Обновляет визуальное представление блока"""
+        model = block_data["model"]
+        
+        # Обновляем прямоугольник
+        x1 = model.x - model.width / 2
+        y1 = model.y - model.height / 2
+        x2 = model.x + model.width / 2
+        y2 = model.y + model.height / 2
+        self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
+        
+        # Обновляем текст
+        self.canvas.coords(block_data["text_id"], model.x, model.y)
+        
+        # Обновляем маркеры изменения размера
+        if block_data == self.selected_block:
+            self.create_resize_handles(block_data)
+
+    def make_block_interactive(self, block_data):
+        """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
-            # Запоминаем начальные координаты
-            if self.is_panning == False:
-                block_data["drag_data"] = {"x": event.x, "y": event.y}
+            if self.current_mode == "select":
+                # Преобразуем координаты мыши в координаты холста
+                x = self.canvas.canvasx(event.x)
+                y = self.canvas.canvasy(event.y)
+                block_data["drag_data"] = {"x": x, "y": y}
+                self.dragging_block = block_data
+                # Останавливаем распространение события
+                return "break"
 
         def drag(event):
-            if "drag_data" in block_data:
+            if (self.current_mode == "select" and 
+                self.dragging_block == block_data and 
+                "drag_data" in block_data):
+                # Преобразуем координаты мыши в координаты холста
+                x = self.canvas.canvasx(event.x)
+                y = self.canvas.canvasy(event.y)
+                
                 # Вычисляем смещение
-                dx = event.x - block_data["drag_data"]["x"]
-                dy = event.y - block_data["drag_data"]["y"]
+                dx = x - block_data["drag_data"]["x"]
+                dy = y - block_data["drag_data"]["y"]
 
-                # Обновляем позицию блока
-                block_data["x"] += dx
-                block_data["y"] += dy
+                # Обновляем позицию блока в модели
+                block_data["model"].x += dx
+                block_data["model"].y += dy
 
                 # Перемещаем прямоугольник и текст
                 self.canvas.move(block_data["rect_id"], dx, dy)
                 self.canvas.move(block_data["text_id"], dx, dy)
 
+                # Обновляем маркеры изменения размера
+                if block_data == self.selected_block:
+                    for handle_id in block_data["resize_handles"].values():
+                        self.canvas.move(handle_id, dx, dy)
+
                 # Обновляем данные о перетаскивании
-                block_data["drag_data"] = {"x": event.x, "y": event.y}
+                block_data["drag_data"] = {"x": x, "y": y}
+
+                # Обновляем свойства позиции
+                if self.selected_block == block_data:
+                    self.properties_panel.update_properties(block_data["model"])
+                
+                # Останавливаем распространение события
+                return "break"
 
         def end_drag(event):
-            if "drag_data" in block_data:
+            if self.dragging_block == block_data and "drag_data" in block_data:
                 del block_data["drag_data"]
-                print(f"Блок {block_data['id']} перемещен в ({block_data['x']:.1f}, {block_data['y']:.1f})")
+                self.dragging_block = None
+                print(f"Блок {block_data['id']} перемещен в ({block_data['model'].x:.1f}, {block_data['model'].y:.1f})")
+
+        def double_click(event):
+            """Обработчик двойного клика для выбора блока"""
+            if self.current_mode == "select":
+                self.select_block(block_data)
+                return "break"
 
         # Привязываем обработчики событий
-        self.canvas.tag_bind(block_data["rect_id"], "<ButtonPress-1>", start_drag)
-        self.canvas.tag_bind(block_data["rect_id"], "<B1-Motion>", drag)
-        self.canvas.tag_bind(block_data["rect_id"], "<ButtonRelease-1>", end_drag)
+        for item_id in [block_data["rect_id"], block_data["text_id"]]:
+            self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
+            self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
+            self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
+            self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
 
-        self.canvas.tag_bind(block_data["text_id"], "<ButtonPress-1>", start_drag)
-        self.canvas.tag_bind(block_data["text_id"], "<B1-Motion>", drag)
-        self.canvas.tag_bind(block_data["text_id"], "<ButtonRelease-1>", end_drag)
+    def select_block(self, block_data):
+        """Выбирает блок и обновляет панель свойств"""
+        # Сбрасываем выделение предыдущего блока
+        if self.selected_block:
+            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            self.delete_resize_handles(self.selected_block)
+        
+        # Выделяем новый блок
+        self.selected_block = block_data
+        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        
+        # Создаем маркеры изменения размера
+        self.create_resize_handles(block_data)
+        
+        # Обновляем панель свойств
+        self.properties_panel.update_properties(block_data["model"])
+        
+        print(f"Выбран блок: {block_data['id']}")
+
+    def on_properties_change(self, block, update_data):
+        """Обработчик изменений в свойствах блока"""
+        # Обновляем модель блока
+        block.update_from_dict(update_data)
+        
+        # Находим визуальное представление блока
+        block_data = next((b for b in self.blocks if b["model"] == block), None)
+        if block_data:
+            # Обновляем визуальное представление
+            if "name" in update_data:
+                self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
+            
+            if "color" in update_data:
+                self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
+            
+            if "border_width" in update_data:
+                self.canvas.itemconfig(block_data["rect_id"], width=update_data["border_width"])
+            
+            if any(key in update_data for key in ["x", "y", "width", "height"]):
+                self.update_block_visual(block_data)
+            
+            # ВАЖНО: Обновляем обводку выбранного элемента
+            if self.selected_block == block_data:
+                # Устанавливаем выделенную обводку для выбранного элемента
+                self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=block.border_width)
+                # Обновляем маркеры изменения размера
+                self.create_resize_handles(block_data)
+            
+        print(f"Обновлен блок {block_data['id']}: {update_data}")
 
     def load_icon(self, name, size):
         """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
@@ -367,18 +698,25 @@ class IDEF0App:
         )
         canvas_frame.grid(row=0, column=1, sticky="nsew", padx=12)
 
-        # Canvas
+        # Canvas с прокруткой
         self.canvas = tk.Canvas(
             canvas_frame,
             bg=Colors.SURFACE,
-            highlightthickness=0
+            highlightthickness=0,
+            scrollregion=(-2000, -2000, 4000, 4000)  # Большая область для панорамирования
         )
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Добавляем скроллбары
+        v_scrollbar = tk.Scrollbar(canvas_frame, orient="vertical", command=self.canvas.yview)
+        h_scrollbar = tk.Scrollbar(canvas_frame, orient="horizontal", command=self.canvas.xview)
+        self.canvas.configure(yscrollcommand=v_scrollbar.set, xscrollcommand=h_scrollbar.set)
+        
+        # Размещаем элементы
+        h_scrollbar.pack(side="bottom", fill="x")
+        v_scrollbar.pack(side="right", fill="y")
+        self.canvas.pack(side="left", fill="both", expand=True)
 
-        # Перерисовывать сетку при изменении размера канвы
-        self.canvas.bind("<Configure>", self.on_canvas_resize)
-
-        # Draw only grid (убран тестовый элемент на сетке)
+        # Рисуем сетку на всей области холста
         self.draw_grid()
 
         # Footer note
@@ -393,42 +731,61 @@ class IDEF0App:
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
 
         # Привязка к событиям клавиатуры
-        self.canvas.bind_all("<KeyPress-space>", self.enable_pan_mode)
-        self.canvas.bind_all("<KeyRelease-space>", self.disable_pan_mode)
+        self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
+        self.canvas.bind_all("<KeyRelease-space>", self.on_space_release)
 
-    def enable_pan_mode(self, event=None):
-        """Включает режим панорамирования при нажатии пробела"""
-        if not self.is_panning:
-            self.is_panning = True
+        # Обработчик клика по пустому месту для сброса выделения
+        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        self.canvas.bind("<B1-Motion>", self.pan_move)
+
+    def on_space_press(self, event):
+        """Обработчик нажатия пробела - временное включение панорамирования"""
+        if self.current_mode == "select":
             self.canvas.configure(cursor="hand2")
-            
-            self.canvas.bind("<ButtonPress-1>", self.pan_start)
-            self.canvas.bind("<B1-Motion>", self.pan_move)
-            self.canvas.bind("<ButtonRelease-1>", self.pan_end)
-            print(f"вошел в режим панорамирование")
-    
-    def disable_pan_mode(self, event=None):
-        """Отключает режим панорамирования при отпускании пробела"""
-        if self.is_panning:
-            self.is_panning = False
-            self.canvas.configure(cursor="")
-            
-            self.canvas.unbind("<ButtonPress-1>")
-            self.canvas.unbind("<B1-Motion>")
-            self.canvas.unbind("<ButtonRelease-1>")
-            print(f"вышел из режима панорамирование")
+            self.is_panning = True
 
-    def pan_start(self, event):
-        """Запоминаем точку начала панорамирования"""
-        self.canvas.scan_mark(event.x, event.y)
+    def on_space_release(self, event):
+        """Обработчик отпускания пробела - возврат к предыдущему режиму"""
+        if self.current_mode == "select":
+            self.canvas.configure(cursor="")
+            self.is_panning = False
+
+    def on_canvas_click(self, event):
+        """Обработчик клика по холсту"""
+        if self.is_panning:
+            # Если включено панорамирование (пробел зажат), начинаем панорамирование
+            self.canvas.scan_mark(event.x, event.y)
+        else:
+            # Если не панорамирование, проверяем клик по блоку или маркеру
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            block_or_handle_clicked = False
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "block" in tags or "resize_handle" in tags:
+                    block_or_handle_clicked = True
+                    break
+            
+            # Если клик был не по блоку или маркеру - сбрасываем выделение
+            if not block_or_handle_clicked:
+                if self.selected_block:
+                    self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+                    self.delete_resize_handles(self.selected_block)
+                    self.selected_block = None
+                    self.properties_panel.update_properties(None)
+                    print("Сброс выделения")
+
+    def on_canvas_release(self, event):
+        """Обработчик отпускания кнопки мыши на холсте"""
+        # Сбрасываем перетаскиваемый блок
+        self.dragging_block = None
+        # Сбрасываем изменение размера
+        self.resizing_block = None
 
     def pan_move(self, event):
         """Перемещаем холст"""
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
-
-    def pan_end(self, event):
-        """Финализируем перемещение"""
-        pass
+        if self.is_panning:
+            self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def apply_hover_effect(self, widget, base_bg, hover_bg):
         """Базовый ховер-эффект - только смена цвета"""
@@ -440,95 +797,24 @@ class IDEF0App:
         widget.bind("<Leave>", on_leave)
     
     def draw_grid(self):
-        """Рисует сетку по текущему размеру канвы"""
+        """Рисует сетку по всей области холста"""
         self.canvas.delete('grid')
-        width = max(self.canvas.winfo_width(), 1)
-        height = max(self.canvas.winfo_height(), 1)
+        
+        # Рисуем сетку на всей области scrollregion
+        left, top, right, bottom = self.canvas.cget('scrollregion').split()
+        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
         # Minor grid (20px) - более светлая
-        for i in range(0, width, 20):
-            self.canvas.create_line(i, 0, i, height, fill=Colors.GRID, width=1, tags='grid')
-        for i in range(0, height, 20):
-            self.canvas.create_line(0, i, width, i, fill=Colors.GRID, width=1, tags='grid')
+        for i in range(left, right, 20):
+            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID, width=1, tags='grid')
+        for i in range(top, bottom, 20):
+            self.canvas.create_line(left, i, right, i, fill=Colors.GRID, width=1, tags='grid')
 
         # Major grid (100px) - немного темнее
-        for i in range(0, width, 100):
-            self.canvas.create_line(i, 0, i, height, fill=Colors.GRID_STRONG, width=1, tags='grid')
-        for i in range(0, height, 100):
-            self.canvas.create_line(0, i, width, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
-
-    def on_canvas_resize(self, _event):
-        """Обработчик изменения размера канвы: перерасчёт сетки."""
-        self.draw_grid()
-
-    def draw_a0_block(self):
-        """Рисует центральный A0 блок"""
-        x, y = 400, 300
-        width, height = 150, 80
-
-        # Main block
-        self.canvas.create_rectangle(
-            x - width/2, y - height/2,
-            x + width/2, y + height/2,
-            fill=Colors.SURFACE,
-            outline=Colors.TEXT_PRIMARY,
-            width=2
-        )
-
-        # Text
-        self.canvas.create_text(
-            x, y,
-            text="Основная\nдеятельность",
-            font=("Segoe UI", 10),
-            justify="center"
-        )
-
-    def draw_labels_and_arrows(self):
-        """Рисует метки и стрелки вокруг A0 блока"""
-        x, y = 400, 300
-        width, height = 150, 80
-
-        # Labels
-        labels = [
-            (x, y - height/2 - 20, "Управление", "top"),
-            (x - width/2 - 28, y, "Вход", "left"),
-            (x, y + height/2 + 20, "Механизм", "bottom"),
-            (x + width/2 + 42, y, ">Выход", "right"),
-            (x + width/2 + 10, y + height/2 + 16, "A0", "a0")
-        ]
-
-        for label_x, label_y, text, position in labels:
-            angle = 0
-            if position == "left":
-                angle = 90
-
-            self.canvas.create_text(
-                label_x, label_y,
-                text=text,
-                font=("Segoe UI", 9),
-                fill=Colors.TEXT_SECONDARY,
-                angle=angle
-            )
-
-        # Right arrow
-        arrow_start_x = x + width/2
-        arrow_end_x = x + width/2 + 34
-
-        self.canvas.create_line(
-            arrow_start_x, y,
-            arrow_end_x, y,
-            fill=Colors.TEXT_PRIMARY,
-            width=2
-        )
-
-        # Arrow head
-        self.canvas.create_polygon(
-            arrow_end_x, y,
-            arrow_end_x - 8, y - 6,
-            arrow_end_x - 8, y + 6,
-            fill=Colors.TEXT_PRIMARY,
-            outline=Colors.TEXT_PRIMARY
-        )
+        for i in range(left, right, 100):
+            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
+        for i in range(top, bottom, 100):
+            self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
     
     def run(self):
         """Запуск приложения"""

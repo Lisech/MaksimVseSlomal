@@ -8,7 +8,7 @@ class Colors:
     SURFACE = "#ffffff"
     TEXT_PRIMARY = "#1f2328"
     TEXT_SECONDARY = "#7a7f87"
-    PRIMARY = "#2d7ef7"
+    PRIMARY = "#2d7ef7"  # Добавлен синий цвет для выделения
     BORDER = "#edf1f5"  # более тусклая светло‑серая граница
     SIDEBAR = "#0f172a"
 
