@@ -24,6 +24,8 @@ class IDEF0App:
         self.selected_block = None  # текущий выбранный блок
         self.dragging_block = None  # блок, который сейчас перетаскивается
         self.current_mode = "select"  # режим работы: "select" или "pan"
+        self.drag_from_sidebar = False  # флаг перетаскивания из панели
+        self.drag_preview = None  # превью перетаскиваемого блока
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -232,40 +234,71 @@ class IDEF0App:
             if icon_name == "Hand":
                 btn.configure(command=self.enable_pan_mode)
 
-            # Привязываем обработчик для кнопки добавления блока
+            # Привязываем обработчики для кнопки добавления блока ТОЛЬКО drag-and-drop
             if icon_name == "Square":
-                btn.configure(command=self.add_new_block)
+                # Убираем команду клика, оставляем только drag-and-drop
+                btn.configure(command=None)
+                # Добавляем обработчики для drag-and-drop
+                btn.bind("<ButtonPress-1>", self.start_drag_from_sidebar)
+                btn.bind("<B1-Motion>", self.drag_from_sidebar)
+                btn.bind("<ButtonRelease-1>", self.end_drag_from_sidebar)
 
             self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
             btn.pack(pady=8)
 
-    def enable_select_mode(self):
-        """Включает режим выбора элементов"""
-        if self.current_mode != "select":
-            self.current_mode = "select"
-            self.is_panning = False
+    def start_drag_from_sidebar(self, event):
+        """Начало перетаскивания из панели инструментов"""
+        self.drag_from_sidebar = True
+        self.canvas.configure(cursor="crosshair")
+        
+        # Создаем превью блока
+        x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+        y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+        
+        width, height = 150, 80
+        self.drag_preview = self.canvas.create_rectangle(
+            x - width / 2, y - height / 2,
+            x + width / 2, y + height / 2,
+            fill="#E3F2FD",
+            outline=Colors.PRIMARY,
+            width=2,
+            dash=(4, 2),
+            tags="drag_preview"
+        )
+
+    def drag_from_sidebar(self, event):
+        """Перетаскивание из панели инструментов"""
+        if self.drag_from_sidebar and self.drag_preview:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            
+            width, height = 150, 80
+            # Обновляем позицию превью
+            self.canvas.coords(
+                self.drag_preview,
+                x - width / 2, y - height / 2,
+                x + width / 2, y + height / 2
+            )
+
+    def end_drag_from_sidebar(self, event):
+        """Завершение перетаскивания из панели инструментов"""
+        if self.drag_from_sidebar and self.drag_preview:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
+            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            
+            # Удаляем превью
+            self.canvas.delete(self.drag_preview)
+            self.drag_preview = None
+            self.drag_from_sidebar = False
             self.canvas.configure(cursor="")
-            print("Включен режим выбора")
+            
+            # Создаем новый блок в точке отпускания
+            self.create_block_at_position(x, y)
 
-    def enable_pan_mode(self):
-        """Включает режим панорамирования"""
-        if self.current_mode != "pan":
-            self.current_mode = "pan"
-            self.is_panning = True
-            self.canvas.configure(cursor="hand2")
-            print("Включен режим панорамирования")
-
-    def add_new_block(self):
-        """Добавляет новый блок на холст с базовыми значениями"""
-        # Получаем видимую область холста
-        canvas_x = self.canvas.canvasx(0)
-        canvas_y = self.canvas.canvasy(0)
-        canvas_width = self.canvas.winfo_width()
-        canvas_height = self.canvas.winfo_height()
-
-        x = canvas_x + canvas_width // 2 if canvas_width > 0 else 400
-        y = canvas_y + canvas_height // 2 if canvas_height > 0 else 300
-
+    def create_block_at_position(self, x, y):
+        """Создает блок в указанной позиции"""
         # Базовые размеры
         width, height = 150, 80
 
@@ -319,8 +352,24 @@ class IDEF0App:
         # Автоматически выбираем новый блок
         self.select_block(block_data)
 
-        print(f"Добавлен новый блок: {block_id}")
+        print(f"Добавлен новый блок через drag-and-drop: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
+
+    def enable_select_mode(self):
+        """Включает режим выбора элементов"""
+        if self.current_mode != "select":
+            self.current_mode = "select"
+            self.is_panning = False
+            self.canvas.configure(cursor="")
+            print("Включен режим выбора")
+
+    def enable_pan_mode(self):
+        """Включает режим панорамирования"""
+        if self.current_mode != "pan":
+            self.current_mode = "pan"
+            self.is_panning = True
+            self.canvas.configure(cursor="hand2")
+            print("Включен режим панорамирования")
 
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
@@ -507,6 +556,7 @@ class IDEF0App:
         # Обработчик клика по пустому месту для сброса выделения
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
+        self.canvas.bind("<B1-Motion>", self.pan_move)
 
     def on_space_press(self, event):
         """Обработчик нажатия пробела - временное включение панорамирования"""
@@ -548,18 +598,10 @@ class IDEF0App:
         # Сбрасываем перетаскиваемый блок
         self.dragging_block = None
 
-    def pan_start(self, event):
-        """Запоминаем точку начала панорамирования"""
-        self.canvas.scan_mark(event.x, event.y)
-
     def pan_move(self, event):
         """Перемещаем холст"""
         if self.is_panning:
             self.canvas.scan_dragto(event.x, event.y, gain=1)
-
-    def pan_end(self, event):
-        """Финализируем перемещение"""
-        pass
 
     def apply_hover_effect(self, widget, base_bg, hover_bg):
         """Базовый ховер-эффект - только смена цвета"""
