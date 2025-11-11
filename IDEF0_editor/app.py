@@ -10,8 +10,7 @@ import math
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
-from models import Block
-from strelki import Arrow
+from models import Block, Arrow
 
 class IDEF0App:
     def __init__(self):
@@ -26,6 +25,7 @@ class IDEF0App:
         self.pan_start_x = 0
         self.pan_start_y = 0
         self.selected_block = None  # текущий выбранный блок
+        self.selected_arrow = None  # текущая выбранная стрелка
         self.dragging_block = None  # блок, который сейчас перетаскивается
         self.current_mode = "select"  # режим работы: "select" или "pan"
         self.drag_from_sidebar = False  # флаг перетаскивания из панели
@@ -33,6 +33,12 @@ class IDEF0App:
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 8  # размер маркеров изменения размера
         self.resize_preview = None  # превью растягивания
+        self.arrow_drawing_mode = False  # режим рисования стрелок
+        self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
+        self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
+        self.arrow_start_y = None  # начальная координата Y (если стрелка начинается не от блока)
+        self.arrow_preview_line = None  # превью линии стрелки
+        self.arrow_drawing = False  # флаг активного рисования стрелки
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -210,6 +216,7 @@ class IDEF0App:
             ("MousePointer2", "Выбрать"),
             ("Hand", "Перемещать"),
             ("Square", "Добавить блок"),
+            ("ArrowRight", "Добавить стрелку"),
             ("Move", "Переместить"),
             ("Type", "Текст"),
             ("Layers", "Слои"),
@@ -240,6 +247,12 @@ class IDEF0App:
 
             if icon_name == "Hand":
                 btn.configure(command=self.enable_pan_mode)
+            
+            if icon_name == "ArrowRight":
+                btn.configure(command=self.enable_arrow_mode)
+            
+            if icon_name == "Trash2":
+                btn.configure(command=self.delete_selected)
 
             # Привязываем обработчики для кнопки добавления блока ТОЛЬКО drag-and-drop
             if icon_name == "Square":
@@ -369,6 +382,11 @@ class IDEF0App:
         if self.current_mode != "select":
             self.current_mode = "select"
             self.is_panning = False
+            self.arrow_drawing_mode = False
+            self.arrow_start_block = None
+            if self.arrow_preview_line:
+                self.canvas.delete(self.arrow_preview_line)
+                self.arrow_preview_line = None
             self.canvas.configure(cursor="")
             print("Включен режим выбора")
 
@@ -377,8 +395,26 @@ class IDEF0App:
         if self.current_mode != "pan":
             self.current_mode = "pan"
             self.is_panning = True
+            self.arrow_drawing_mode = False
+            self.arrow_start_block = None
             self.canvas.configure(cursor="hand2")
             print("Включен режим панорамирования")
+    
+    def enable_arrow_mode(self):
+        """Включает режим рисования стрелок"""
+        if self.current_mode != "draw_arrow":
+            self.current_mode = "draw_arrow"
+            self.is_panning = False
+            self.arrow_drawing_mode = True
+            self.arrow_start_block = None
+            self.arrow_start_x = None
+            self.arrow_start_y = None
+            self.arrow_drawing = False
+            if self.arrow_preview_line:
+                self.canvas.delete(self.arrow_preview_line)
+                self.arrow_preview_line = None
+            self.canvas.configure(cursor="crosshair")
+            print("Включен режим рисования стрелок")
 
     def create_resize_handles(self, block_data):
         """Создает маркеры для изменения размера блока"""
@@ -558,6 +594,9 @@ class IDEF0App:
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
+            # Не начинаем перетаскивание в режиме рисования стрелок
+            if self.current_mode == "draw_arrow":
+                return None
             if self.current_mode == "select":
                 # Преобразуем координаты мыши в координаты холста
                 x = self.canvas.canvasx(event.x)
@@ -566,6 +605,7 @@ class IDEF0App:
                 self.dragging_block = block_data
                 # Останавливаем распространение события
                 return "break"
+            return None
 
         def drag(event):
             if (self.current_mode == "select" and 
@@ -616,9 +656,20 @@ class IDEF0App:
             if self.current_mode == "select":
                 self.select_block(block_data)
                 return "break"
+        
+        def arrow_click(event):
+            """Обработчик клика по блоку в режиме рисования стрелок"""
+            # В новом режиме рисования стрелок клик обрабатывается в on_canvas_click
+            # Этот обработчик больше не используется, но оставляем для совместимости
+            if self.current_mode == "draw_arrow":
+                # Разрешаем обработку в on_canvas_click
+                return None
+            return None
 
         # Привязываем обработчики событий
+        # Важно: arrow_click должен быть первым, чтобы перехватывать клики в режиме рисования стрелок
         for item_id in [block_data["rect_id"], block_data["text_id"]]:
+            self.canvas.tag_bind(item_id, "<Button-1>", arrow_click)  # Сначала обработчик стрелок
             self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
             self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
             self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
@@ -630,6 +681,10 @@ class IDEF0App:
         if self.selected_block:
             self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
             self.delete_resize_handles(self.selected_block)
+        
+        # Сбрасываем выделение стрелки, если была выбрана
+        if self.selected_arrow:
+            self.deselect_arrow()
         
         # Выделяем новый блок
         self.selected_block = block_data
@@ -643,35 +698,111 @@ class IDEF0App:
         
         print(f"Выбран блок: {block_data['id']}")
 
-    def on_properties_change(self, block, update_data):
-        """Обработчик изменений в свойствах блока"""
-        # Обновляем модель блока
-        block.update_from_dict(update_data)
+    def select_arrow(self, arrow_data):
+        """Выбирает стрелку и обновляет панель свойств"""
+        # Сбрасываем выделение предыдущей стрелки
+        if self.selected_arrow:
+            self.deselect_arrow()
         
-        # Находим визуальное представление блока
-        block_data = next((b for b in self.blocks if b["model"] == block), None)
-        if block_data:
-            # Обновляем визуальное представление
-            if "name" in update_data:
-                self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
+        # Сбрасываем выделение блока, если был выбран
+        if self.selected_block:
+            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            self.delete_resize_handles(self.selected_block)
+            self.selected_block = None
+        
+        # Выделяем новую стрелку
+        self.selected_arrow = arrow_data
+        arrow = arrow_data["arrow"]
+        
+        # Увеличиваем толщину линии для выделения
+        if arrow_data.get("line_id"):
+            self.canvas.itemconfig(arrow_data["line_id"], width=arrow.width + 2)
+        
+        # Обновляем панель свойств
+        self.properties_panel.update_properties(arrow)
+        
+        print(f"Выбрана стрелка: {arrow.id}")
+    
+    def deselect_arrow(self):
+        """Снимает выделение со стрелки"""
+        if self.selected_arrow:
+            arrow = self.selected_arrow["arrow"]
+            # Восстанавливаем обычную толщину линии
+            if self.selected_arrow.get("line_id"):
+                self.canvas.itemconfig(self.selected_arrow["line_id"], width=arrow.width)
+            self.selected_arrow = None
+    
+    def on_arrow_click(self, event):
+        """Обработчик клика по стрелке"""
+        if self.current_mode == "select":
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
             
-            if "color" in update_data:
-                self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
+            # Находим элемент под курсором
+            item_id = self.canvas.find_closest(x, y)[0]
+            tags = self.canvas.gettags(item_id)
             
-            if "border_width" in update_data:
-                self.canvas.itemconfig(block_data["rect_id"], width=update_data["border_width"])
+            arrow_id = None
+            for tag in tags:
+                if tag.startswith("arrow_") and tag != "arrow_line" and tag != "arrow_arrowhead":
+                    arrow_id = tag
+                    break
             
-            if any(key in update_data for key in ["x", "y", "width", "height"]):
-                self.update_block_visual(block_data)
+            if arrow_id:
+                arrow_data = next((a for a in self.arrows if a["arrow"].id == arrow_id), None)
+                if arrow_data:
+                    self.select_arrow(arrow_data)
+                    return "break"
+
+    def on_properties_change(self, element, update_data):
+        """Обработчик изменений в свойствах элемента (блока или стрелки)"""
+        
+        # Обновляем модель элемента
+        element.update_from_dict(update_data)
+        
+        # Обработка блоков
+        if isinstance(element, Block):
+            # Находим визуальное представление блока
+            block_data = next((b for b in self.blocks if b["model"] == element), None)
+            if block_data:
+                # Обновляем визуальное представление
+                if "name" in update_data:
+                    self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
+                
+                if "color" in update_data:
+                    self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
+                
+                if "border_width" in update_data:
+                    self.canvas.itemconfig(block_data["rect_id"], width=update_data["border_width"])
+                
+                if any(key in update_data for key in ["x", "y", "width", "height"]):
+                    self.update_block_visual(block_data)
+                
+                # ВАЖНО: Обновляем обводку выбранного элемента
+                if self.selected_block == block_data:
+                    # Устанавливаем выделенную обводку для выбранного элемента
+                    self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=element.border_width)
+                    # Обновляем маркеры изменения размера
+                    self.create_resize_handles(block_data)
+                
+                print(f"Обновлен блок {block_data['id']}: {update_data}")
+        
+        # Обработка стрелок
+        elif isinstance(element, Arrow):
+            # Находим визуальное представление стрелки
+            arrow_data = next((a for a in self.arrows if a["arrow"] == element), None)
+            if arrow_data:
+                # Перерисовываем стрелку с новыми свойствами
+                self.draw_arrow(arrow_data)
+                
+                # Если стрелка выбрана, обновляем выделение
+                if self.selected_arrow == arrow_data:
+                    arrow = arrow_data["arrow"]
+                    if arrow_data.get("line_id"):
+                        self.canvas.itemconfig(arrow_data["line_id"], width=arrow.width + 2)
             
-            # ВАЖНО: Обновляем обводку выбранного элемента
-            if self.selected_block == block_data:
-                # Устанавливаем выделенную обводку для выбранного элемента
-                self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=block.border_width)
-                # Обновляем маркеры изменения размера
-                self.create_resize_handles(block_data)
-            
-        print(f"Обновлен блок {block_data['id']}: {update_data}")
+            print(f"Обновлена стрелка {element.id}: {update_data}")
 
     def load_icon(self, name, size):
         """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
@@ -731,6 +862,9 @@ class IDEF0App:
 
         # Рисуем сетку на всей области холста
         self.draw_grid()
+        
+        # Отрисовываем все стрелки после создания canvas
+        self.root.after(100, self.draw_all_arrows)
 
         # Footer note
         self.footer_label = tk.Label(
@@ -750,7 +884,14 @@ class IDEF0App:
         # Обработчик клика по пустому месту для сброса выделения
         self.canvas.bind("<Button-1>", self.on_canvas_click)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
-        self.canvas.bind("<B1-Motion>", self.pan_move)
+        self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
+        
+        # Обработчик движения мыши для превью стрелки
+        self.canvas.bind("<Motion>", self.on_canvas_motion)
+        
+        # Привязываем обработчики для выбора стрелок
+        self.canvas.tag_bind("arrow_line", "<Button-1>", self.on_arrow_click)
+        self.canvas.tag_bind("arrow_arrowhead", "<Button-1>", self.on_arrow_click)
 
     def on_space_press(self, event):
         """Обработчик нажатия пробела - временное включение панорамирования"""
@@ -769,22 +910,72 @@ class IDEF0App:
         if self.is_panning:
             # Если включено панорамирование (пробел зажат), начинаем панорамирование
             self.canvas.scan_mark(event.x, event.y)
+        elif self.current_mode == "draw_arrow":
+            # В режиме рисования стрелок - начинаем рисование стрелки
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            
+            # Проверяем, кликнули ли по блоку
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            block_clicked = None
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "block" in tags:
+                    # Находим блок по тегу
+                    for tag in tags:
+                        if tag.startswith("block_"):
+                            block_clicked = next((b for b in self.blocks if b["id"] == tag), None)
+                            break
+                    if block_clicked:
+                        break
+            
+            if block_clicked:
+                # Начинаем стрелку от блока
+                self.arrow_start_block = block_clicked
+                self.arrow_start_x = None
+                self.arrow_start_y = None
+                print(f"Начало стрелки от блока: {block_clicked['id']}")
+            else:
+                # Начинаем стрелку от точки на холсте
+                self.arrow_start_block = None
+                self.arrow_start_x = x
+                self.arrow_start_y = y
+                print(f"Начало стрелки от точки: ({x:.1f}, {y:.1f})")
+            
+            self.arrow_drawing = True
         else:
             # Если не панорамирование, проверяем клик по блоку или маркеру
             items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
             block_or_handle_clicked = False
+            arrow_clicked = False
             for item in items:
                 tags = self.canvas.gettags(item)
                 if "block" in tags or "resize_handle" in tags:
                     block_or_handle_clicked = True
                     break
+                if "arrow_line" in tags or "arrow_arrowhead" in tags:
+                    arrow_clicked = True
+                    # Находим стрелку по тегу
+                    arrow_id = None
+                    for tag in tags:
+                        if tag.startswith("arrow_"):
+                            arrow_id = tag
+                            break
+                    if arrow_id:
+                        arrow_data = next((a for a in self.arrows if a["arrow"].id == arrow_id), None)
+                        if arrow_data:
+                            self.select_arrow(arrow_data)
+                    break
             
-            # Если клик был не по блоку или маркеру - сбрасываем выделение
-            if not block_or_handle_clicked:
+            # Если клик был не по блоку, маркеру или стрелке - сбрасываем выделение
+            if not block_or_handle_clicked and not arrow_clicked:
                 if self.selected_block:
                     self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
                     self.delete_resize_handles(self.selected_block)
                     self.selected_block = None
+                if self.selected_arrow:
+                    self.deselect_arrow()
                     self.properties_panel.update_properties(None)
                     print("Сброс выделения")
 
@@ -794,11 +985,223 @@ class IDEF0App:
         self.dragging_block = None
         # Сбрасываем изменение размера
         self.resizing_block = None
+        
+        # Завершаем рисование стрелки
+        if self.current_mode == "draw_arrow" and self.arrow_drawing:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            
+            # Проверяем, отпустили ли на блоке
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            end_block = None
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "block" in tags:
+                    # Находим блок по тегу
+                    for tag in tags:
+                        if tag.startswith("block_"):
+                            end_block = next((b for b in self.blocks if b["id"] == tag), None)
+                            break
+                    if end_block:
+                        break
+            
+            # Удаляем превью
+            if self.arrow_preview_line:
+                self.canvas.delete(self.arrow_preview_line)
+                self.arrow_preview_line = None
+            
+            # Создаем стрелку
+            if self.arrow_start_block and end_block:
+                # Стрелка от блока к блоку
+                if self.arrow_start_block["id"] != end_block["id"]:
+                    from_side, to_side = self._determine_arrow_sides(
+                        self.arrow_start_block["model"],
+                        end_block["model"]
+                    )
+                    self.create_arrow_between_blocks(
+                        self.arrow_start_block["id"],
+                        end_block["id"],
+                        from_side=from_side,
+                        to_side=to_side
+                    )
+            elif self.arrow_start_block:
+                # Стрелка от блока к точке
+                self.create_arrow_from_block_to_point(
+                    self.arrow_start_block["id"],
+                    x, y
+                )
+            elif end_block:
+                # Стрелка от точки к блоку
+                self.create_arrow_from_point_to_block(
+                    self.arrow_start_x, self.arrow_start_y,
+                    end_block["id"]
+                )
+            elif self.arrow_start_x is not None and self.arrow_start_y is not None:
+                # Стрелка от точки к точке
+                self.create_arrow_from_point_to_point(
+                    self.arrow_start_x, self.arrow_start_y,
+                    x, y
+                )
+            
+            # Сбрасываем состояние
+            self.arrow_start_block = None
+            self.arrow_start_x = None
+            self.arrow_start_y = None
+            self.arrow_drawing = False
 
-    def pan_move(self, event):
-        """Перемещаем холст"""
+    def on_canvas_drag(self, event):
+        """Обработчик перетаскивания мыши на холсте"""
         if self.is_panning:
+            # Панорамирование
             self.canvas.scan_dragto(event.x, event.y, gain=1)
+        elif self.current_mode == "draw_arrow" and self.arrow_drawing:
+            # Рисование стрелки - обновляем превью
+            self.on_canvas_motion(event)
+    
+    def on_canvas_motion(self, event):
+        """Обработчик движения мыши для превью стрелки"""
+        if self.current_mode == "draw_arrow" and self.arrow_drawing:
+            # Преобразуем координаты мыши в координаты холста
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            
+            # Определяем начальную точку
+            start_x = None
+            start_y = None
+            
+            if self.arrow_start_block:
+                # Начало от блока
+                start_block = self.arrow_start_block["model"]
+                # Определяем сторону начального блока на основе направления к курсору
+                dx = x - start_block.x
+                dy = y - start_block.y
+                
+                if abs(dx) > abs(dy):
+                    from_side = "right" if dx > 0 else "left"
+                else:
+                    from_side = "bottom" if dy > 0 else "top"
+                
+                start_x, start_y = self._get_block_side_point(start_block, from_side)
+            elif self.arrow_start_x is not None and self.arrow_start_y is not None:
+                # Начало от точки
+                start_x = self.arrow_start_x
+                start_y = self.arrow_start_y
+            
+            if start_x is not None and start_y is not None:
+                # Удаляем старый превью
+                if self.arrow_preview_line:
+                    self.canvas.delete(self.arrow_preview_line)
+                
+                # Создаем новый превью
+                self.arrow_preview_line = self.canvas.create_line(
+                    start_x, start_y, x, y,
+                    fill=Colors.PRIMARY,
+                    width=2,
+                    dash=(4, 2),
+                    tags="arrow_preview"
+                )
+    
+    def handle_arrow_click(self, block_data):
+        """Обработчик клика по блоку в режиме рисования стрелок"""
+        print(f"handle_arrow_click вызван для блока {block_data['id']}, arrow_start_block={self.arrow_start_block}")
+        if not self.arrow_start_block:
+            # Устанавливаем начальный блок
+            self.arrow_start_block = block_data
+            print(f"Выбран начальный блок для стрелки: {block_data['id']}")
+        else:
+            # Создаем стрелку от начального блока к текущему
+            if self.arrow_start_block["id"] != block_data["id"]:
+                # Определяем стороны для соединения
+                from_side, to_side = self._determine_arrow_sides(
+                    self.arrow_start_block["model"],
+                    block_data["model"]
+                )
+                
+                print(f"Создание стрелки: от {self.arrow_start_block['id']} ({from_side}) к {block_data['id']} ({to_side})")
+                
+                # Создаем стрелку
+                arrow_data = self.create_arrow_between_blocks(
+                    self.arrow_start_block["id"],
+                    block_data["id"],
+                    from_side=from_side,
+                    to_side=to_side
+                )
+                
+                print(f"Стрелка создана: {arrow_data['arrow'].id}")
+                
+                # Сбрасываем режим рисования
+                self.arrow_start_block = None
+                if self.arrow_preview_line:
+                    self.canvas.delete(self.arrow_preview_line)
+                    self.arrow_preview_line = None
+            else:
+                # Клик по тому же блоку - сбрасываем выбор
+                self.arrow_start_block = None
+                if self.arrow_preview_line:
+                    self.canvas.delete(self.arrow_preview_line)
+                    self.arrow_preview_line = None
+                print("Сброс начального блока (клик по тому же блоку)")
+    
+    def _determine_arrow_sides(self, from_block, to_block):
+        """
+        Определяет стороны блоков для соединения стрелкой
+        
+        Args:
+            from_block: Модель начального блока
+            to_block: Модель конечного блока
+            
+        Returns:
+            tuple: (from_side, to_side) - стороны для соединения
+        """
+        # Вычисляем вектор от начального блока к конечному
+        dx = to_block.x - from_block.x
+        dy = to_block.y - from_block.y
+        
+        # Определяем сторону начального блока (откуда выходит стрелка)
+        if abs(dx) > abs(dy):
+            # Горизонтальное направление
+            from_side = "right" if dx > 0 else "left"
+        else:
+            # Вертикальное направление
+            from_side = "bottom" if dy > 0 else "top"
+        
+        # Определяем сторону конечного блока (куда входит стрелка)
+        if abs(dx) > abs(dy):
+            # Горизонтальное направление
+            to_side = "left" if dx > 0 else "right"
+        else:
+            # Вертикальное направление
+            to_side = "top" if dy > 0 else "bottom"
+        
+        return from_side, to_side
+    
+    def _get_block_side_point(self, block, side):
+        """
+        Получает точку на стороне блока (вспомогательный метод)
+        
+        Args:
+            block: Модель блока
+            side: Сторона ("left", "right", "top", "bottom")
+            
+        Returns:
+            tuple: (x, y) координаты точки
+        """
+        x = block.x
+        y = block.y
+        width = block.width
+        height = block.height
+        
+        if side == "left":
+            return (x - width / 2, y)
+        elif side == "right":
+            return (x + width / 2, y)
+        elif side == "top":
+            return (x, y - height / 2)
+        elif side == "bottom":
+            return (x, y + height / 2)
+        else:
+            return (x, y)
 
     def apply_hover_effect(self, widget, base_bg, hover_bg):
         """Базовый ховер-эффект - только смена цвета"""
@@ -844,17 +1247,41 @@ class IDEF0App:
         
         if arrow.from_block_id:
             from_block = next((b["model"] for b in self.blocks if b["id"] == arrow.from_block_id), None)
+            if from_block is None:
+                print(f"Предупреждение: Блок {arrow.from_block_id} не найден для стрелки {arrow.id}")
         
         if arrow.to_block_id:
             to_block = next((b["model"] for b in self.blocks if b["id"] == arrow.to_block_id), None)
+            if to_block is None:
+                print(f"Предупреждение: Блок {arrow.to_block_id} не найден для стрелки {arrow.id}")
         
         # Вычисляем точки соединения
+        print(f"Вычисление координат для стрелки {arrow.id}")
+        print(f"  from_block_id={arrow.from_block_id}, to_block_id={arrow.to_block_id}")
+        print(f"  from_side={arrow.from_side}, to_side={arrow.to_side}")
+        print(f"  from_block найден: {from_block is not None}, to_block найден: {to_block is not None}")
+        
+        if from_block:
+            print(f"  from_block: x={from_block.x}, y={from_block.y}, width={from_block.width}, height={from_block.height}")
+        if to_block:
+            print(f"  to_block: x={to_block.x}, y={to_block.y}, width={to_block.width}, height={to_block.height}")
+        
         arrow.calculate_connection_points(from_block, to_block)
         
         x1, y1 = arrow.display_x1, arrow.display_y1
         x2, y2 = arrow.display_x2, arrow.display_y2
         
+        print(f"  Вычисленные координаты: ({x1}, {y1}) -> ({x2}, {y2})")
+        
         if x1 is None or y1 is None or x2 is None or y2 is None:
+            print(f"Ошибка: Не удалось вычислить координаты для стрелки {arrow.id}")
+            print(f"  from_block_id={arrow.from_block_id}, to_block_id={arrow.to_block_id}")
+            print(f"  from_block={from_block}, to_block={to_block}")
+            print(f"  from_side={arrow.from_side}, to_side={arrow.to_side}")
+            print(f"  display_x1={x1}, display_y1={y1}, display_x2={x2}, display_y2={y2}")
+            print(f"  Всего блоков: {len(self.blocks)}")
+            for b in self.blocks:
+                print(f"    Блок: {b['id']}")
             return  # Нельзя нарисовать стрелку без координат
         
         # Определяем стиль линии
@@ -865,22 +1292,29 @@ class IDEF0App:
             dash = (2, 2)
         
         # Удаляем старую линию, если существует
-        if "line_id" in arrow_data:
-            self.canvas.delete(arrow_data["line_id"])
+        if arrow_data.get("line_id"):
+            try:
+                self.canvas.delete(arrow_data["line_id"])
+            except tk.TclError:
+                pass  # Элемент уже удален
         
-        # Рисуем линию стрелки
+        # Рисуем линию стрелки (увеличиваем толщину если стрелка выбрана)
+        line_width = arrow.width + 2 if (self.selected_arrow and arrow_data == self.selected_arrow) else arrow.width
         line_id = self.canvas.create_line(
             x1, y1, x2, y2,
             fill=arrow.color,
-            width=arrow.width,
+            width=line_width,
             dash=dash,
             tags=("arrow_line", arrow.id)
         )
         arrow_data["line_id"] = line_id
         
         # Удаляем старый наконечник, если существует
-        if "arrowhead_id" in arrow_data:
-            self.canvas.delete(arrow_data["arrowhead_id"])
+        if arrow_data.get("arrowhead_id"):
+            try:
+                self.canvas.delete(arrow_data["arrowhead_id"])
+            except tk.TclError:
+                pass  # Элемент уже удален
         
         # Рисуем наконечник стрелки
         arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow.color, arrow.width)
@@ -889,6 +1323,13 @@ class IDEF0App:
         # Сохраняем ID для обновления
         if arrowhead_id:
             self.canvas.addtag_withtag(arrow.id, arrowhead_id)
+        
+        # Поднимаем стрелку наверх, чтобы она была поверх блоков
+        self.canvas.tag_raise(line_id)
+        if arrowhead_id:
+            self.canvas.tag_raise(arrowhead_id)
+        
+        print(f"Нарисована стрелка {arrow.id}: ({x1:.1f}, {y1:.1f}) -> ({x2:.1f}, {y2:.1f})")
     
     def create_arrowhead(self, x1, y1, x2, y2, color, width):
         """
@@ -969,6 +1410,17 @@ class IDEF0App:
         Returns:
             Словарь с данными стрелки
         """
+        # Проверяем, что блоки существуют
+        from_block_data = next((b for b in self.blocks if b["id"] == from_block_id), None)
+        to_block_data = next((b for b in self.blocks if b["id"] == to_block_id), None)
+        
+        if from_block_data is None:
+            print(f"Ошибка: Блок {from_block_id} не найден!")
+            return None
+        if to_block_data is None:
+            print(f"Ошибка: Блок {to_block_id} не найден!")
+            return None
+        
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
@@ -987,10 +1439,156 @@ class IDEF0App:
         }
         
         self.arrows.append(arrow_data)
+        print(f"Добавлена стрелка в список, всего стрелок: {len(self.arrows)}")
+        
+        # Рисуем стрелку
         self.draw_arrow(arrow_data)
         
         print(f"Создана стрелка {arrow_id} от {from_block_id} к {to_block_id}")
         return arrow_data
+    
+    def create_arrow_from_block_to_point(self, from_block_id, x, y):
+        """Создает стрелку от блока к точке на холсте"""
+        from_block_data = next((b for b in self.blocks if b["id"] == from_block_id), None)
+        if from_block_data is None:
+            print(f"Ошибка: Блок {from_block_id} не найден!")
+            return None
+        
+        arrow_id = f"arrow_{self.next_arrow_id}"
+        self.next_arrow_id += 1
+        
+        # Определяем сторону блока на основе направления к точке
+        from_block = from_block_data["model"]
+        dx = x - from_block.x
+        dy = y - from_block.y
+        
+        if abs(dx) > abs(dy):
+            from_side = "right" if dx > 0 else "left"
+        else:
+            from_side = "bottom" if dy > 0 else "top"
+        
+        arrow = Arrow(
+            arrow_id=arrow_id,
+            from_block_id=from_block_id,
+            to_block_id=None,
+            from_side=from_side,
+            to_side=None,
+            x2=x,
+            y2=y
+        )
+        
+        arrow_data = {
+            "arrow": arrow,
+            "line_id": None,
+            "arrowhead_id": None
+        }
+        
+        self.arrows.append(arrow_data)
+        self.draw_arrow(arrow_data)
+        print(f"Создана стрелка {arrow_id} от блока {from_block_id} к точке ({x:.1f}, {y:.1f})")
+        return arrow_data
+    
+    def create_arrow_from_point_to_block(self, x, y, to_block_id):
+        """Создает стрелку от точки на холсте к блоку"""
+        to_block_data = next((b for b in self.blocks if b["id"] == to_block_id), None)
+        if to_block_data is None:
+            print(f"Ошибка: Блок {to_block_id} не найден!")
+            return None
+        
+        arrow_id = f"arrow_{self.next_arrow_id}"
+        self.next_arrow_id += 1
+        
+        # Определяем сторону блока на основе направления от точки
+        to_block = to_block_data["model"]
+        dx = to_block.x - x
+        dy = to_block.y - y
+        
+        if abs(dx) > abs(dy):
+            to_side = "left" if dx > 0 else "right"
+        else:
+            to_side = "top" if dy > 0 else "bottom"
+        
+        arrow = Arrow(
+            arrow_id=arrow_id,
+            from_block_id=None,
+            to_block_id=to_block_id,
+            from_side=None,
+            to_side=to_side,
+            x1=x,
+            y1=y
+        )
+        
+        arrow_data = {
+            "arrow": arrow,
+            "line_id": None,
+            "arrowhead_id": None
+        }
+        
+        self.arrows.append(arrow_data)
+        self.draw_arrow(arrow_data)
+        print(f"Создана стрелка {arrow_id} от точки ({x:.1f}, {y:.1f}) к блоку {to_block_id}")
+        return arrow_data
+    
+    def create_arrow_from_point_to_point(self, x1, y1, x2, y2):
+        """Создает стрелку от точки к точке на холсте"""
+        arrow_id = f"arrow_{self.next_arrow_id}"
+        self.next_arrow_id += 1
+        
+        arrow = Arrow(
+            arrow_id=arrow_id,
+            from_block_id=None,
+            to_block_id=None,
+            from_side=None,
+            to_side=None,
+            x1=x1,
+            y1=y1,
+            x2=x2,
+            y2=y2
+        )
+        
+        arrow_data = {
+            "arrow": arrow,
+            "line_id": None,
+            "arrowhead_id": None
+        }
+        
+        self.arrows.append(arrow_data)
+        self.draw_arrow(arrow_data)
+        print(f"Создана стрелка {arrow_id} от точки ({x1:.1f}, {y1:.1f}) к точке ({x2:.1f}, {y2:.1f})")
+        return arrow_data
+    
+    def delete_selected(self):
+        """Удаляет выбранный элемент (блок или стрелку)"""
+        if self.selected_block:
+            # Удаляем стрелки, соединенные с этим блоком
+            block_id = self.selected_block["id"]
+            arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
+            for arrow_data in arrows_to_remove:
+                self.delete_arrow(arrow_data)
+            
+            # Удаляем блок
+            self.canvas.delete(self.selected_block["rect_id"])
+            self.canvas.delete(self.selected_block["text_id"])
+            self.delete_resize_handles(self.selected_block)
+            self.blocks.remove(self.selected_block)
+            self.selected_block = None
+            self.properties_panel.update_properties(None)
+            print(f"Блок удален")
+        elif self.selected_arrow:
+            # Удаляем стрелку
+            self.delete_arrow(self.selected_arrow)
+            self.selected_arrow = None
+            self.properties_panel.update_properties(None)
+            print(f"Стрелка удалена")
+    
+    def delete_arrow(self, arrow_data):
+        """Удаляет стрелку"""
+        if arrow_data.get("line_id"):
+            self.canvas.delete(arrow_data["line_id"])
+        if arrow_data.get("arrowhead_id"):
+            self.canvas.delete(arrow_data["arrowhead_id"])
+        if arrow_data in self.arrows:
+            self.arrows.remove(arrow_data)
     
     def run(self):
         """Запуск приложения"""
