@@ -55,55 +55,73 @@ class LayerManager:
     """Менеджер слоев для работы с вложенностью блоков"""
     
     def __init__(self):
-        self.current_level = 0
-        self.level_stack = []  # Стек для хранения истории переходов
+        self.current_level_path = []  # Текущий путь в виде списка block_id
+        self.level_history = {}  # Состояния для каждого уровня
     
     def get_blocks_for_current_level(self, all_blocks):
         """Возвращает блоки для текущего уровня"""
-        return [block for block in all_blocks if block.level == self.current_level]
+        if not self.current_level_path:
+            # Корневой уровень - блоки без parent_id
+            return [block for block in all_blocks if block.parent_id is None]
+        else:
+            # Уровень детализации - блоки с parent_id = последнему в пути
+            parent_id = self.current_level_path[-1]
+            return [block for block in all_blocks if block.parent_id == parent_id]
     
     def enter_block_level(self, block):
-        """Переход на уровень блока (проваливаемся в блок)"""
+        """Переход на уровень детализации блока"""
         if block:
-            # Сохраняем текущий уровень и ID блока в стек
-            self.level_stack.append({
-                'level': self.current_level,
-                'block_id': block.id,
-                'block_code': block.code
-            })
-            # Устанавливаем уровень равным коду блока (просто меняем current_level)
-            self.current_level = block.level + 1
+            # Добавляем блок в путь
+            self.current_level_path.append(block.id)
             return True
         return False
     
     def exit_level(self):
         """Возврат на уровень выше"""
-        if self.level_stack:
-            previous_level = self.level_stack.pop()
-            self.current_level = previous_level['level']
+        if self.current_level_path:
+            self.current_level_path.pop()
             return True
         return False
     
     def get_current_parent_id(self):
         """Возвращает ID родительского блока для текущего уровня"""
-        if self.level_stack:
-            return self.level_stack[-1]['block_id']
+        if self.current_level_path:
+            return self.current_level_path[-1]
         return None
     
     def get_level_path(self, all_blocks):
         """Возвращает путь текущего уровня в виде строки"""
-        if not self.level_stack:
+        if not self.current_level_path:
             return "Уровень 0"
         
-        # Строим путь из кодов блоков в стеке
+        # Строим путь из кодов блоков
         path_parts = ["Уровень 0"]
-        for stack_item in self.level_stack:
-            path_parts.append(stack_item['block_code'])
+        current_parent_id = None
+        
+        for block_id in self.current_level_path:
+            block = next((b for b in all_blocks if b.id == block_id), None)
+            if block:
+                path_parts.append(block.code)
+                current_parent_id = block.id
         
         return " -> ".join(path_parts)
     
     def get_current_level_name(self):
         """Возвращает имя текущего уровня"""
-        if self.level_stack:
-            return self.level_stack[-1]['block_code']
-        return "Уровень 0"
+        if not self.current_level_path:
+            return "Уровень 0"
+        
+        # Возвращаем код последнего блока в пути
+        return f"Уровень {len(self.current_level_path)}"
+    
+    def save_level_state(self, level_key, state):
+        """Сохраняет состояние уровня"""
+        self.level_history[level_key] = state
+    
+    def get_level_state(self, level_key):
+        """Возвращает сохраненное состояние уровня"""
+        return self.level_history.get(level_key)
+    
+    def get_current_level_key(self):
+        """Возвращает уникальный ключ для текущего уровня"""
+        return "->".join(self.current_level_path) if self.current_level_path else "root"

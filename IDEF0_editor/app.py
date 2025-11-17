@@ -267,59 +267,64 @@ class IDEF0App:
         
 
     def level_down(self):
-        """Проваливаемся в выбранный блок (переход на уровень блока)"""
+        """Проваливаемся в выбранный блок (переход на уровень детализации блока)"""
         if not self.selected_block:
             print("Выберите блок для перехода на уровень ниже")
             return
         
-        if self.selected_block["model"].level != self.layer_manager.current_level:
+        # Проверяем, что блок принадлежит текущему уровню
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        if self.selected_block["model"] not in current_blocks:
             print("Можно проваливаться только в блоки текущего уровня")
             return
         
-        # Сохраняем состояние текущего уровня (позицию прокрутки)
-        self.save_current_level_state()
+        # Сохраняем состояние текущего уровня
+        current_level_key = self.layer_manager.get_current_level_key()
+        self.save_current_level_state(current_level_key)
         
-        # Переходим на уровень блока
+        # Переходим на уровень детализации блока
         self.layer_manager.enter_block_level(self.selected_block["model"])
         
-        # Восстанавливаем состояние нового уровня или устанавливаем по умолчанию
-        self.restore_level_state()
+        # Восстанавливаем состояние нового уровня или показываем пустой
+        new_level_key = self.layer_manager.get_current_level_key()
+        self.restore_level_state(new_level_key)
         
-        self.update_footer_info()  # ОБНОВЛЯЕМ ИНФОРМАЦИЮ В ФУТЕРЕ
-        print(f"Перешли на уровень блока {self.selected_block['model'].code}")
+        self.update_footer_info()
+        print(f"Перешли на уровень детализации блока {self.selected_block['model'].code}")
 
     def level_up(self):
         """Возврат на уровень выше"""
         if self.layer_manager.exit_level():
             # Восстанавливаем состояние предыдущего уровня
-            self.restore_level_state()
-            self.update_footer_info()  # ОБНОВЛЯЕМ ИНФОРМАЦИЮ В ФУТЕРЕ
-            print(f"Вернулись на уровень выше. Текущий уровень: {self.layer_manager.get_current_level_name()}")
+            level_key = self.layer_manager.get_current_level_key()
+            self.restore_level_state(level_key)
+            self.update_footer_info()
+            print(f"Вернулись на уровень выше")
         else:
             print("Уже на корневом уровне")
 
-    def save_current_level_state(self):
-        """Сохраняет состояние текущего уровня (позицию прокрутки)"""
-        level_key = self.layer_manager.get_current_level_name()
+    def save_current_level_state(self, level_key):
+        """Сохраняет состояние текущего уровня"""
         # Получаем текущую позицию прокрутки
         x_view = self.canvas.xview()[0]
         y_view = self.canvas.yview()[0]
-        self.level_states[level_key] = {
+        
+        state = {
             'x_view': x_view,
             'y_view': y_view,
             'selected_block_id': self.selected_block["id"] if self.selected_block else None
         }
-
-    def restore_level_state(self):
-        """Восстанавливает состояние уровня"""
-        level_key = self.layer_manager.get_current_level_name()
         
+        self.layer_manager.save_level_state(level_key, state)
+
+    def restore_level_state(self, level_key):
+        """Восстанавливает состояние уровня"""
         # Обновляем холст
         self.refresh_canvas()
         
         # Восстанавливаем позицию прокрутки если есть сохраненное состояние
-        if level_key in self.level_states:
-            state = self.level_states[level_key]
+        state = self.layer_manager.get_level_state(level_key)
+        if state:
             self.canvas.xview_moveto(state['x_view'])
             self.canvas.yview_moveto(state['y_view'])
             
@@ -328,6 +333,10 @@ class IDEF0App:
                 block_data = next((b for b in self.blocks if b["id"] == state['selected_block_id']), None)
                 if block_data:
                     self.select_block(block_data)
+        else:
+            # Если состояния нет, устанавливаем вид по умолчанию
+            self.canvas.xview_moveto(0.5)
+            self.canvas.yview_moveto(0.5)
 
     def show_layers_panel(self):
         """Показывает информацию о текущем уровне"""
@@ -343,18 +352,18 @@ class IDEF0App:
         self.draw_grid()
         
         # Получаем блоки для текущего уровня
-        current_level_blocks = [b for b in self.blocks if b["model"].level == self.layer_manager.current_level]
+        current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        current_blocks_ids = [block.id for block in current_blocks_models]
         
-        # Перерисовываем блоки текущего уровня
-        for block_data in current_level_blocks:
-            self.redraw_block(block_data)
+        # Перерисовываем только блоки текущего уровня
+        for block_data in self.blocks:
+            if block_data["model"].id in current_blocks_ids:
+                self.redraw_block(block_data)
         
-        # Сбрасываем выделение (оно восстановится в restore_level_state если нужно)
-        if self.selected_block:
-            # Проверяем, что выбранный блок принадлежит текущему уровню
-            if self.selected_block["model"].level != self.layer_manager.current_level:
-                self.selected_block = None
-                self.properties_panel.update_properties(None)
+        # Сбрасываем выделение если выбранный блок не принадлежит текущему уровню
+        if self.selected_block and self.selected_block["model"].id not in current_blocks_ids:
+            self.selected_block = None
+            self.properties_panel.update_properties(None)
 
     def redraw_block(self, block_data):
         """Перерисовывает блок на холсте"""
@@ -477,7 +486,7 @@ class IDEF0App:
             parent_block = next((b["model"] for b in self.blocks if b["id"] == parent_id), None)
             if parent_block:
                 # Считаем сколько уже есть блоков на этом уровне с тем же родителем
-                sibling_blocks = [b for b in current_blocks if b.parent_id == parent_id]
+                sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
                 code = f"{parent_block.code}.{len(sibling_blocks) + 1}"
             else:
                 code = f"A{len(current_blocks) + 1}"
@@ -495,7 +504,7 @@ class IDEF0App:
             width=width,
             height=height,
             parent_id=parent_id,
-            level=self.layer_manager.current_level
+            level=len(self.layer_manager.current_level_path)  # Уровень = глубина вложенности
         )
 
         # Используем общий метод для создания визуального представления
@@ -506,7 +515,7 @@ class IDEF0App:
         if block_data:
             self.select_block(block_data)
 
-        print(f"Добавлен новый блок: {block_id} (Уровень: {self.layer_manager.current_level}, Код: {code})")
+        print(f"Добавлен новый блок: {block_id} (Родитель: {parent_id}, Код: {code})")
         print(f"Всего блоков: {len(self.blocks)}")
 
     def create_visual_block(self, block_model):
