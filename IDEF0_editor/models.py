@@ -1,7 +1,3 @@
-"""
-Модели данных
-"""
-
 class Block:
     def __init__(self, block_id=None, name="Входит название...", code="A0", 
                  element_type="Выберите тип...", description="Входит основное элемента...",
@@ -45,3 +41,10 @@ class Block:
         self.height = data.get("height", self.height)
         self.color = data.get("color", self.color)
         self.border_width = data.get("border_width", self.border_width)
+    
+    def get_code_position(self):
+        """Возвращает позицию для отображения кода (правый нижний угол)"""
+        return (
+            self.x + self.width / 2 - 10,  # x - смещение от правого края
+            self.y + self.height / 2 - 10  # y - смещение от нижнего края
+        )

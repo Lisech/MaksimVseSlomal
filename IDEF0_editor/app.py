@@ -367,6 +367,7 @@ class IDEF0App:
             self.is_panning = False
             self.canvas.configure(cursor="")
             print("Включен режим выбора")
+            self.restore_block_handlers()
 
     def enable_pan_mode(self):
         """Включает режим панорамирования"""
@@ -375,6 +376,22 @@ class IDEF0App:
             self.is_panning = True
             self.canvas.configure(cursor="hand2")
             print("Включен режим панорамирования")
+            self.disable_block_handlers()
+
+    def restore_block_handlers(self):
+        """Восстанавливает обработчики событий для всех блоков"""
+        for block_data in self.blocks:
+            self.make_block_interactive(block_data)
+
+    def disable_block_handlers(self):
+        """Отключает обработчики событий для всех блоков в режиме панорамирования"""
+        for block_data in self.blocks:
+            for item_id in [block_data["rect_id"], block_data["text_id"]]:
+                # Удаляем все привязанные обработчики
+                self.canvas.tag_unbind(item_id, "<ButtonPress-1>")
+                self.canvas.tag_unbind(item_id, "<B1-Motion>")
+                self.canvas.tag_unbind(item_id, "<ButtonRelease-1>")
+                self.canvas.tag_unbind(item_id, "<Double-Button-1>")
 
     def create_resize_handles(self, block_data):
         """Создает маркеры для изменения размера блока"""
@@ -753,27 +770,35 @@ class IDEF0App:
 
     def on_canvas_click(self, event):
         """Обработчик клика по холсту"""
-        if self.is_panning:
-            # Если включено панорамирование (пробел зажат), начинаем панорамирование
+        if self.is_panning or self.current_mode == "pan":
+            # Если включено панорамирование (пробел зажат или режим панорамирования), начинаем панорамирование
             self.canvas.scan_mark(event.x, event.y)
-        else:
-            # Если не панорамирование, проверяем клик по блоку или маркеру
-            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
-            block_or_handle_clicked = False
-            for item in items:
-                tags = self.canvas.gettags(item)
-                if "block" in tags or "resize_handle" in tags:
-                    block_or_handle_clicked = True
-                    break
-            
-            # Если клик был не по блоку или маркеру - сбрасываем выделение
-            if not block_or_handle_clicked:
-                if self.selected_block:
-                    self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
-                    self.delete_resize_handles(self.selected_block)
-                    self.selected_block = None
-                    self.properties_panel.update_properties(None)
-                    print("Сброс выделения")
+            return  # Прерываем дальнейшую обработку
+        
+        # Преобразуем координаты мыши в координаты холста
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        # Если не панорамирование, проверяем клик по блоку или маркеру
+        items = self.canvas.find_overlapping(x, y, x, y)
+        block_or_handle_clicked = False
+        
+        for item in items:
+            tags = self.canvas.gettags(item)
+            if "block" in tags or "resize_handle" in tags:
+                block_or_handle_clicked = True
+                break
+        
+        # Если клик был не по блоку или маркеру - сбрасываем выделение
+        if not block_or_handle_clicked:
+            if self.selected_block:
+                self.canvas.itemconfig(self.selected_block["rect_id"], 
+                                    outline=Colors.TEXT_PRIMARY, 
+                                    width=self.selected_block["model"].border_width)
+                self.delete_resize_handles(self.selected_block)
+                self.selected_block = None
+                self.properties_panel.update_properties(None)
+                print("Сброс выделения")
 
     def on_canvas_release(self, event):
         """Обработчик отпускания кнопки мыши на холсте"""
@@ -781,10 +806,15 @@ class IDEF0App:
         self.dragging_block = None
         # Сбрасываем изменение размера
         self.resizing_block = None
+        
+        # Если был режим панорамирования и он временный (по пробелу), возвращаем курсор
+        if self.current_mode == "select" and self.is_panning:
+            self.canvas.configure(cursor="")
+            self.is_panning = False
 
     def pan_move(self, event):
         """Перемещаем холст"""
-        if self.is_panning:
+        if self.is_panning or self.current_mode == "pan":
             self.canvas.scan_dragto(event.x, event.y, gain=1)
 
     def apply_hover_effect(self, widget, base_bg, hover_bg):
