@@ -10,6 +10,7 @@ from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
 from models import Block
+from models import LayerManager
 
 class IDEF0App:
     def __init__(self):
@@ -29,6 +30,8 @@ class IDEF0App:
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 8  # размер маркеров изменения размера
         self.resize_preview = None  # превью растягивания
+        self.layer_manager = LayerManager()
+        self.level_states = {}
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -246,8 +249,164 @@ class IDEF0App:
                 btn.bind("<B1-Motion>", self.drag_from_sidebar)
                 btn.bind("<ButtonRelease-1>", self.end_drag_from_sidebar)
 
+            if icon_name == "Layers":
+                btn.configure(command=self.show_layers_panel)
+
+            if icon_name == "ChevronUp":
+                btn.configure(command=self.level_up)
+
+            # Кнопка "На уровень ниже" (ChevronDown)
+            if icon_name == "ChevronDown":
+                btn.configure(command=self.level_down)
+
             self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
             btn.pack(pady=8)
+
+        separator = tk.Frame(sidebar_frame, bg=Colors.BORDER, height=1)
+        separator.pack(fill=tk.X, padx=8, pady=8)
+        
+
+    def level_down(self):
+        """Проваливаемся в выбранный блок (переход на уровень блока)"""
+        if not self.selected_block:
+            print("Выберите блок для перехода на уровень ниже")
+            return
+        
+        if self.selected_block["model"].level != self.layer_manager.current_level:
+            print("Можно проваливаться только в блоки текущего уровня")
+            return
+        
+        # Сохраняем состояние текущего уровня (позицию прокрутки)
+        self.save_current_level_state()
+        
+        # Переходим на уровень блока
+        self.layer_manager.enter_block_level(self.selected_block["model"])
+        
+        # Восстанавливаем состояние нового уровня или устанавливаем по умолчанию
+        self.restore_level_state()
+        
+        self.update_footer_info()  # ОБНОВЛЯЕМ ИНФОРМАЦИЮ В ФУТЕРЕ
+        print(f"Перешли на уровень блока {self.selected_block['model'].code}")
+
+    def level_up(self):
+        """Возврат на уровень выше"""
+        if self.layer_manager.exit_level():
+            # Восстанавливаем состояние предыдущего уровня
+            self.restore_level_state()
+            self.update_footer_info()  # ОБНОВЛЯЕМ ИНФОРМАЦИЮ В ФУТЕРЕ
+            print(f"Вернулись на уровень выше. Текущий уровень: {self.layer_manager.get_current_level_name()}")
+        else:
+            print("Уже на корневом уровне")
+
+    def save_current_level_state(self):
+        """Сохраняет состояние текущего уровня (позицию прокрутки)"""
+        level_key = self.layer_manager.get_current_level_name()
+        # Получаем текущую позицию прокрутки
+        x_view = self.canvas.xview()[0]
+        y_view = self.canvas.yview()[0]
+        self.level_states[level_key] = {
+            'x_view': x_view,
+            'y_view': y_view,
+            'selected_block_id': self.selected_block["id"] if self.selected_block else None
+        }
+
+    def restore_level_state(self):
+        """Восстанавливает состояние уровня"""
+        level_key = self.layer_manager.get_current_level_name()
+        
+        # Обновляем холст
+        self.refresh_canvas()
+        
+        # Восстанавливаем позицию прокрутки если есть сохраненное состояние
+        if level_key in self.level_states:
+            state = self.level_states[level_key]
+            self.canvas.xview_moveto(state['x_view'])
+            self.canvas.yview_moveto(state['y_view'])
+            
+            # Восстанавливаем выделение блока если есть
+            if state['selected_block_id']:
+                block_data = next((b for b in self.blocks if b["id"] == state['selected_block_id']), None)
+                if block_data:
+                    self.select_block(block_data)
+
+    def show_layers_panel(self):
+        """Показывает информацию о текущем уровне"""
+        current_level_name = self.layer_manager.get_current_level_name()
+        print(f"Текущий уровень: {current_level_name}")
+
+    def refresh_canvas(self):
+        """Обновляет холст в соответствии с текущим уровнем"""
+        # Очищаем холст
+        self.canvas.delete("all")
+        
+        # Перерисовываем сетку
+        self.draw_grid()
+        
+        # Получаем блоки для текущего уровня
+        current_level_blocks = [b for b in self.blocks if b["model"].level == self.layer_manager.current_level]
+        
+        # Перерисовываем блоки текущего уровня
+        for block_data in current_level_blocks:
+            self.redraw_block(block_data)
+        
+        # Сбрасываем выделение (оно восстановится в restore_level_state если нужно)
+        if self.selected_block:
+            # Проверяем, что выбранный блок принадлежит текущему уровню
+            if self.selected_block["model"].level != self.layer_manager.current_level:
+                self.selected_block = None
+                self.properties_panel.update_properties(None)
+
+    def redraw_block(self, block_data):
+        """Перерисовывает блок на холсте"""
+        model = block_data["model"]
+        
+        # Рисуем прямоугольник
+        rect = self.canvas.create_rectangle(
+            model.x - model.width / 2, model.y - model.height / 2,
+            model.x + model.width / 2, model.y + model.height / 2,
+            fill=model.color,
+            outline=Colors.TEXT_PRIMARY,
+            width=model.border_width,
+            tags=("block", block_data["id"])
+        )
+
+        # Добавляем основной текст
+        text = self.canvas.create_text(
+            model.x, model.y,
+            text=model.name,
+            font=("Segoe UI", 10),
+            justify="center",
+            tags=("block_text", block_data["id"])
+        )
+
+        # Добавляем код в правом нижнем углу
+        code_x, code_y = model.get_code_position()
+        code_text = self.canvas.create_text(
+            code_x, code_y,
+            text=model.code,
+            font=("Segoe UI", 8),
+            fill="#666666",
+            anchor="se",
+            tags=("block_code", block_data["id"])
+        )
+
+        # Обновляем ID элементов в блоке
+        block_data["rect_id"] = rect
+        block_data["text_id"] = text
+        block_data["code_text_id"] = code_text
+
+        # Делаем блок интерактивным
+        self.make_block_interactive(block_data)
+
+    def update_footer_info(self):
+        """Обновляет информацию в футере о текущем уровне"""
+        level_path = self.layer_manager.get_level_path([b["model"] for b in self.blocks])
+        
+        # Обновляем левый лейбл (диаграмма и масштаб)
+        self.footer_left_label.config(text="Диаграмма: Пример IDEF0 | Масштаб: 100%")
+        
+        # Обновляем правый лейбл (уровень)
+        self.footer_right_label.config(text=level_path)
 
     def start_drag_from_sidebar(self, event):
         """Начало перетаскивания из панели инструментов"""
@@ -301,7 +460,7 @@ class IDEF0App:
             self.create_block_at_position(x, y)
 
     def create_block_at_position(self, x, y):
-        """Создает блок в указанной позиции"""
+        """Создает блок в указанной позиции с учетом текущего уровня"""
         # Базовые размеры
         width, height = 150, 80
 
@@ -309,54 +468,86 @@ class IDEF0App:
         block_id = f"block_{self.next_block_id}"
         self.next_block_id += 1
 
+        # Генерируем код на основе текущего уровня
+        parent_id = self.layer_manager.get_current_parent_id()
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        
+        if parent_id:
+            # Находим родительский блок для наследования кода
+            parent_block = next((b["model"] for b in self.blocks if b["id"] == parent_id), None)
+            if parent_block:
+                # Считаем сколько уже есть блоков на этом уровне с тем же родителем
+                sibling_blocks = [b for b in current_blocks if b.parent_id == parent_id]
+                code = f"{parent_block.code}.{len(sibling_blocks) + 1}"
+            else:
+                code = f"A{len(current_blocks) + 1}"
+        else:
+            # Корневой уровень
+            code = f"A{len(current_blocks) + 1}"
+
         # Создаем модель блока
         block_model = Block(
             block_id=block_id,
-            name=f"Блок {self.next_block_id - 1}",
-            code=f"A{self.next_block_id - 1}",
+            name=f"Блок {code}",
+            code=code,
             x=x,
             y=y,
             width=width,
-            height=height
+            height=height,
+            parent_id=parent_id,
+            level=self.layer_manager.current_level
         )
 
+        # Используем общий метод для создания визуального представления
+        self.create_visual_block(block_model)
+
+        # Автоматически выбираем новый блок
+        block_data = next((b for b in self.blocks if b["id"] == block_id), None)
+        if block_data:
+            self.select_block(block_data)
+
+        print(f"Добавлен новый блок: {block_id} (Уровень: {self.layer_manager.current_level}, Код: {code})")
+        print(f"Всего блоков: {len(self.blocks)}")
+
+    def create_visual_block(self, block_model):
+        """Создает визуальное представление блока на холсте"""
         # Рисуем прямоугольник
         rect = self.canvas.create_rectangle(
-            x - width / 2, y - height / 2,
-            x + width / 2, y + height / 2,
+            block_model.x - block_model.width / 2, block_model.y - block_model.height / 2,
+            block_model.x + block_model.width / 2, block_model.y + block_model.height / 2,
             fill=block_model.color,
             outline=Colors.TEXT_PRIMARY,
             width=block_model.border_width,
-            tags=("block", block_id)
+            tags=("block", block_model.id)
         )
 
         # Добавляем основной текст
         text = self.canvas.create_text(
-            x, y,
+            block_model.x, block_model.y,
             text=block_model.name,
             font=("Segoe UI", 10),
             justify="center",
-            tags=("block_text", block_id)
+            tags=("block_text", block_model.id)
         )
 
-        # Добавляем код в правом нижнем углу (полупрозрачный)
+        # Добавляем код в правом нижнем углу
         code_x, code_y = block_model.get_code_position()
         code_text = self.canvas.create_text(
             code_x, code_y,
             text=block_model.code,
             font=("Segoe UI", 8),
-            fill="#666666",  # Серый полупрозрачный цвет
-            anchor="se",  # Привязка к юго-восточному углу
-            tags=("block_code", block_id)
+            fill="#666666",
+            anchor="se",
+            tags=("block_code", block_model.id)
         )
 
         # Сохраняем информацию о блоке
         block_data = {
-            "id": block_id,
+            "id": block_model.id,
             "model": block_model,
             "rect_id": rect,
             "text_id": text,
-            "code_text_id": code_text,  # Добавляем ID текста с кодом
+            "code_text_id": code_text,
             "resize_handles": {}
         }
 
@@ -364,12 +555,8 @@ class IDEF0App:
 
         # Делаем блок перемещаемым и выбираемым
         self.make_block_interactive(block_data)
-
-        # Автоматически выбираем новый блок
-        self.select_block(block_data)
-
-        print(f"Добавлен новый блок через drag-and-drop: {block_id}")
-        print(f"Всего блоков: {len(self.blocks)}")
+        
+        print(f"Создан дочерний блок: {block_model.code}")
 
     def enable_select_mode(self):
         """Включает режим выбора элементов"""
@@ -778,6 +965,14 @@ class IDEF0App:
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
 
+        self.footer_right_label = tk.Label(
+            canvas_frame,
+            text="Уровень 0",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_SECONDARY,
+            bg=Colors.SURFACE
+        )
+        self.footer_right_label.place(relx=1, rely=1, x=-14, y=-10, anchor='se')
         # Привязка к событиям клавиатуры
         self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
         self.canvas.bind_all("<KeyRelease-space>", self.on_space_release)
