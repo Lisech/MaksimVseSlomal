@@ -29,6 +29,7 @@ class Colors:
         "ACTIVE": "#e2e8f0",
         "BLOCK_FILL": "#E3F2FD",
         "BLOCK_BORDER": "#1f2328",
+        "ARROW_COLOR": "#000000",
     }
 
     # Палитра тёмной темы (подобрана под стиль макета)
@@ -46,6 +47,7 @@ class Colors:
         "ACTIVE": "#1f2937",
         "BLOCK_FILL": "#0f172a",
         "BLOCK_BORDER": "#ffffff",
+        "ARROW_COLOR": "#ffffff",
     }
 
     # Текущие значения (будут переопределены при вызове use_light/use_dark)
@@ -62,6 +64,7 @@ class Colors:
     ACTIVE = LIGHT["ACTIVE"]
     BLOCK_FILL = LIGHT["BLOCK_FILL"]
     BLOCK_BORDER = LIGHT["BLOCK_BORDER"]
+    ARROW_COLOR = LIGHT["ARROW_COLOR"]
 
     @classmethod
     def use_light(cls):
@@ -80,6 +83,7 @@ class Colors:
         cls.ACTIVE = palette["ACTIVE"]
         cls.BLOCK_FILL = palette["BLOCK_FILL"]
         cls.BLOCK_BORDER = palette["BLOCK_BORDER"]
+        cls.ARROW_COLOR = palette["ARROW_COLOR"]
 
     @classmethod
     def use_dark(cls):
@@ -98,6 +102,7 @@ class Colors:
         cls.ACTIVE = palette["ACTIVE"]
         cls.BLOCK_FILL = palette["BLOCK_FILL"]
         cls.BLOCK_BORDER = palette["BLOCK_BORDER"]
+        cls.ARROW_COLOR = palette["ARROW_COLOR"]
 
 class Dimensions:
     # Window

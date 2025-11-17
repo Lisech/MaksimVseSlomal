@@ -42,6 +42,10 @@ class IDEF0App:
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 8  # размер маркеров изменения размера
         self.resize_preview = None  # превью растягивания
+        self.block_action_buttons = []
+        self.arrow_action_buttons = []
+        self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
+        self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
         self.arrow_drawing_mode = False  # режим рисования стрелок
         self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
         self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
@@ -139,7 +143,7 @@ class IDEF0App:
         self.apply_hover_effect(zoom_out_btn)
         
         # Zoom percentage
-        self.zoom_label = tk.Label(zoom_frame, text="100%", bg=Colors.SURFACE, font=("Segoe UI", 10))
+        self.zoom_label = tk.Label(zoom_frame, text="100%", bg=Colors.SURFACE, fg=Colors.TEXT_PRIMARY, font=("Segoe UI", 10))
         self.zoom_label.pack(side=tk.LEFT, padx=4)
         
         # Zoom in button
@@ -755,6 +759,10 @@ class IDEF0App:
         if arrow_data.get("line_id"):
             self.canvas.itemconfig(arrow_data["line_id"], width=arrow.width + 2)
         
+        # Показываем кнопки действий и маркеры для перетаскивания
+        self.show_arrow_action_buttons(arrow_data)
+        self.create_arrow_drag_handles(arrow_data)
+        
         # Обновляем панель свойств
         self.properties_panel.update_properties(arrow)
         
@@ -767,6 +775,9 @@ class IDEF0App:
             # Восстанавливаем обычную толщину линии
             if self.selected_arrow.get("line_id"):
                 self.canvas.itemconfig(self.selected_arrow["line_id"], width=arrow.width)
+            # Скрываем кнопки действий и маркеры
+            self.hide_arrow_action_buttons()
+            self.delete_arrow_drag_handles()
             self.selected_arrow = None
     
     def on_arrow_click(self, event):
@@ -1107,16 +1118,327 @@ class IDEF0App:
             self.properties_panel.update_properties(None)
         # Удаляем стрелки, соединенные с этим блоком
         block_id = block_data["id"]
-        arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
-        for arrow_data in arrows_to_remove:
-            self.delete_arrow(arrow_data)
-        # Удаляем сам блок
-        self.canvas.delete(block_data["rect_id"])
-        self.canvas.delete(block_data["text_id"])
-        self.delete_resize_handles(block_data)
-        if block_data in self.blocks:
-            self.blocks.remove(block_data)
-        self.hide_block_action_buttons()
+    
+    def show_arrow_action_buttons(self, arrow_data):
+        """Показывает кнопки действий для выбранной стрелки."""
+        if not hasattr(self, "canvas"):
+            return
+        
+        self.hide_arrow_action_buttons()
+        
+        arrow = arrow_data["arrow"]
+        # Получаем координаты стрелки
+        if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
+            return
+        
+        # Позиция кнопок - справа от середины стрелки
+        mid_x = (arrow.display_x1 + arrow.display_x2) / 2
+        mid_y = (arrow.display_y1 + arrow.display_y2) / 2
+        base_x = mid_x + 24
+        base_y = mid_y
+        spacing = 32
+        
+        buttons_spec = [
+            ("move", "Переместить", "Moved"),
+            ("copy", "Копировать", "Copy"),
+            ("delete", "Удалить", "Close"),
+        ]
+        
+        self.arrow_action_buttons = []
+        
+        for index, (action, tooltip, icon_name) in enumerate(buttons_spec):
+            btn = tk.Button(
+                self.canvas,
+                bg=Colors.SURFACE,
+                fg=Colors.TEXT_PRIMARY,
+                relief="flat",
+                bd=0,
+                padx=0,
+                pady=0,
+                activebackground=Colors.SURFACE,
+                highlightthickness=0,
+                text="",
+            )
+            self.set_widget_icon(btn, icon_name, (24, 24), compound="center", force_original=True)
+            
+            if action == "move":
+                # Перемещение стрелки при перетаскивании иконки
+                def start_move(ev, a=arrow_data):
+                    self._arrow_move_icon_state = {
+                        "arrow": a,
+                        "start_x": ev.x_root,
+                        "start_y": ev.y_root,
+                        "orig_x1": a["arrow"].display_x1,
+                        "orig_y1": a["arrow"].display_y1,
+                        "orig_x2": a["arrow"].display_x2,
+                        "orig_y2": a["arrow"].display_y2,
+                    }
+                
+                def do_move(ev, a=arrow_data):
+                    state = getattr(self, "_arrow_move_icon_state", None)
+                    if not state or state.get("arrow") is not a:
+                        return
+                    dx = ev.x_root - state["start_x"]
+                    dy = ev.y_root - state["start_y"]
+                    
+                    arrow = a["arrow"]
+                    # Перемещаем оба конца стрелки
+                    if arrow.x1 is not None:
+                        arrow.x1 = state["orig_x1"] + dx
+                    if arrow.y1 is not None:
+                        arrow.y1 = state["orig_y1"] + dy
+                    if arrow.x2 is not None:
+                        arrow.x2 = state["orig_x2"] + dx
+                    if arrow.y2 is not None:
+                        arrow.y2 = state["orig_y2"] + dy
+                    
+                    # Перерисовываем стрелку
+                    self.draw_arrow(a)
+                    # Обновляем кнопки и маркеры
+                    self.update_arrow_action_buttons_position(a)
+                    self.update_arrow_drag_handles(a)
+                
+                def end_move(_ev, a=arrow_data):
+                    state = getattr(self, "_arrow_move_icon_state", None)
+                    if state and state.get("arrow") is a:
+                        self._arrow_move_icon_state = None
+                
+                btn.bind("<ButtonPress-1>", start_move)
+                btn.bind("<B1-Motion>", do_move)
+                btn.bind("<ButtonRelease-1>", end_move)
+            elif action == "copy":
+                btn.configure(command=lambda a=arrow_data: self.copy_arrow(a))
+            elif action == "delete":
+                btn.configure(command=lambda a=arrow_data: self.delete_arrow_direct(a))
+            
+            self.apply_hover_effect(btn, enable=False)
+            
+            y = base_y + (index - 1) * spacing
+            win_id = self.canvas.create_window(
+                base_x,
+                y,
+                window=btn,
+                anchor="w",
+                tags=("arrow_action", f"arrow_actions_{arrow.id}"),
+            )
+            self.arrow_action_buttons.append({"window_id": win_id, "button": btn, "action": action})
+    
+    def update_arrow_action_buttons_position(self, arrow_data):
+        """Обновляет позицию кнопок действий при перемещении стрелки."""
+        if not self.arrow_action_buttons or self.selected_arrow != arrow_data:
+            return
+        arrow = arrow_data["arrow"]
+        if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
+            return
+        mid_x = (arrow.display_x1 + arrow.display_x2) / 2
+        mid_y = (arrow.display_y1 + arrow.display_y2) / 2
+        base_x = mid_x + 24
+        base_y = mid_y
+        spacing = 32
+        
+        for index, data in enumerate(self.arrow_action_buttons):
+            y = base_y + (index - 1) * spacing
+            try:
+                self.canvas.coords(data["window_id"], base_x, y)
+            except tk.TclError:
+                continue
+    
+    def hide_arrow_action_buttons(self):
+        """Удаляет кнопки действий для стрелки с холста."""
+        if not hasattr(self, "canvas"):
+            self.arrow_action_buttons = []
+            return
+        for data in self.arrow_action_buttons:
+            try:
+                if data.get("window_id"):
+                    self.canvas.delete(data["window_id"])
+            except tk.TclError:
+                pass
+            btn = data.get("button")
+            if btn is not None and btn.winfo_exists():
+                btn.destroy()
+        self.arrow_action_buttons = []
+    
+    def copy_arrow(self, arrow_data):
+        """Создаёт копию стрелки рядом с исходной."""
+        arrow = arrow_data["arrow"]
+        offset = 30
+        if arrow.display_x1 is not None and arrow.display_y1 is not None and arrow.display_x2 is not None and arrow.display_y2 is not None:
+            self.create_arrow_from_point_to_point(
+                arrow.display_x1 + offset, arrow.display_y1 + offset,
+                arrow.display_x2 + offset, arrow.display_y2 + offset
+            )
+    
+    def delete_arrow_direct(self, arrow_data):
+        """Удаление конкретной стрелки по кнопке."""
+        if arrow_data not in self.arrows:
+            return
+        if self.selected_arrow == arrow_data:
+            self.selected_arrow = None
+            self.properties_panel.update_properties(None)
+        self.delete_arrow(arrow_data)
+    
+    def create_arrow_drag_handles(self, arrow_data):
+        """Создаёт маркеры для перетаскивания концов стрелки."""
+        self.delete_arrow_drag_handles()
+        if not hasattr(self, "canvas"):
+            return
+        
+        arrow = arrow_data["arrow"]
+        if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
+            return
+        
+        handle_size = 8
+        
+        # Маркер на начале стрелки
+        handle_start = self.canvas.create_oval(
+            arrow.display_x1 - handle_size, arrow.display_y1 - handle_size,
+            arrow.display_x1 + handle_size, arrow.display_y1 + handle_size,
+            fill=Colors.PRIMARY,
+            outline=Colors.SURFACE,
+            width=1,
+            tags=("arrow_drag_handle", "arrow_handle_start", arrow.id)
+        )
+        
+        # Маркер на конце стрелки
+        handle_end = self.canvas.create_oval(
+            arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
+            arrow.display_x2 + handle_size, arrow.display_y2 + handle_size,
+            fill=Colors.PRIMARY,
+            outline=Colors.SURFACE,
+            width=1,
+            tags=("arrow_drag_handle", "arrow_handle_end", arrow.id)
+        )
+        
+        self.arrow_drag_handles[arrow.id] = {
+            "start": handle_start,
+            "end": handle_end
+        }
+        
+        # Привязываем обработчики для перетаскивания
+        self.canvas.tag_bind(handle_start, "<ButtonPress-1>", 
+                           lambda e, a=arrow_data: self.start_arrow_drag(e, a, "start"))
+        self.canvas.tag_bind(handle_start, "<B1-Motion>", 
+                           lambda e, a=arrow_data: self.do_arrow_drag(e, a, "start"))
+        self.canvas.tag_bind(handle_start, "<ButtonRelease-1>", 
+                           lambda e, a=arrow_data: self.end_arrow_drag(e, a))
+        
+        self.canvas.tag_bind(handle_end, "<ButtonPress-1>", 
+                           lambda e, a=arrow_data: self.start_arrow_drag(e, a, "end"))
+        self.canvas.tag_bind(handle_end, "<B1-Motion>", 
+                           lambda e, a=arrow_data: self.do_arrow_drag(e, a, "end"))
+        self.canvas.tag_bind(handle_end, "<ButtonRelease-1>", 
+                           lambda e, a=arrow_data: self.end_arrow_drag(e, a))
+    
+    def delete_arrow_drag_handles(self):
+        """Удаляет маркеры перетаскивания стрелки."""
+        if not hasattr(self, "canvas"):
+            self.arrow_drag_handles = {}
+            return
+        for handles in self.arrow_drag_handles.values():
+            try:
+                if handles.get("start"):
+                    self.canvas.delete(handles["start"])
+                if handles.get("end"):
+                    self.canvas.delete(handles["end"])
+            except tk.TclError:
+                pass
+        self.arrow_drag_handles = {}
+    
+    def update_arrow_drag_handles(self, arrow_data):
+        """Обновляет позицию маркеров при изменении стрелки."""
+        if not hasattr(self, "canvas"):
+            return
+        arrow = arrow_data["arrow"]
+        arrow_id = arrow.id
+        if arrow_id not in self.arrow_drag_handles:
+            return
+        if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
+            return
+        
+        handles = self.arrow_drag_handles[arrow_id]
+        handle_size = 8
+        
+        try:
+            self.canvas.coords(handles["start"],
+                             arrow.display_x1 - handle_size, arrow.display_y1 - handle_size,
+                             arrow.display_x1 + handle_size, arrow.display_y1 + handle_size)
+            self.canvas.coords(handles["end"],
+                             arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
+                             arrow.display_x2 + handle_size, arrow.display_y2 + handle_size)
+        except tk.TclError:
+            pass
+    
+    def start_arrow_drag(self, event, arrow_data, end_type):
+        """Начало перетаскивания конца стрелки."""
+        if self.current_mode != "select":
+            return
+        self.dragging_arrow_end = end_type
+        arrow = arrow_data["arrow"]
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        if end_type == "start":
+            arrow_data["drag_data"] = {
+                "start_x": x,
+                "start_y": y,
+                "orig_x": arrow.display_x1,
+                "orig_y": arrow.display_y1
+            }
+        else:
+            arrow_data["drag_data"] = {
+                "start_x": x,
+                "start_y": y,
+                "orig_x": arrow.display_x2,
+                "orig_y": arrow.display_y2
+            }
+        return "break"
+    
+    def do_arrow_drag(self, event, arrow_data, end_type):
+        """Перетаскивание конца стрелки."""
+        if self.dragging_arrow_end != end_type or "drag_data" not in arrow_data:
+            return
+        arrow = arrow_data["arrow"]
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        dx = x - arrow_data["drag_data"]["start_x"]
+        dy = y - arrow_data["drag_data"]["start_y"]
+        
+        if end_type == "start":
+            # Обновляем начальную точку
+            if arrow.from_block_id is None:
+                # Если стрелка не привязана к блоку, обновляем свободные координаты
+                if arrow.x1 is not None:
+                    arrow.x1 = arrow_data["drag_data"]["orig_x"] + dx
+                if arrow.y1 is not None:
+                    arrow.y1 = arrow_data["drag_data"]["orig_y"] + dy
+            arrow.display_x1 = arrow_data["drag_data"]["orig_x"] + dx
+            arrow.display_y1 = arrow_data["drag_data"]["orig_y"] + dy
+        else:
+            # Обновляем конечную точку
+            if arrow.to_block_id is None:
+                # Если стрелка не привязана к блоку, обновляем свободные координаты
+                if arrow.x2 is not None:
+                    arrow.x2 = arrow_data["drag_data"]["orig_x"] + dx
+                if arrow.y2 is not None:
+                    arrow.y2 = arrow_data["drag_data"]["orig_y"] + dy
+            arrow.display_x2 = arrow_data["drag_data"]["orig_x"] + dx
+            arrow.display_y2 = arrow_data["drag_data"]["orig_y"] + dy
+        
+        # Перерисовываем стрелку
+        self.draw_arrow(arrow_data)
+        # Обновляем маркеры и кнопки
+        self.update_arrow_drag_handles(arrow_data)
+        self.update_arrow_action_buttons_position(arrow_data)
+        
+        return "break"
+    
+    def end_arrow_drag(self, event, arrow_data):
+        """Завершение перетаскивания конца стрелки."""
+        if "drag_data" in arrow_data:
+            del arrow_data["drag_data"]
+        self.dragging_arrow_end = None
 
     def set_widget_icon(self, widget, icon_name, size, compound=None, force_original=False):
         """
@@ -1192,6 +1514,9 @@ class IDEF0App:
 
         # Применяем цвета к блокам и текстам
         self.apply_theme_to_blocks(from_palette, to_palette)
+        
+        # Применяем цвета к стрелкам
+        self.apply_theme_to_arrows(from_palette, to_palette)
 
         # Перерисовываем иконки
         self.refresh_icons_for_theme()
@@ -1242,6 +1567,22 @@ class IDEF0App:
 
             # Обновляем цвет текста блока
             self.canvas.itemconfig(text_id, fill=new_text)
+    
+    def apply_theme_to_arrows(self, from_palette, to_palette):
+        """Обновляет цвета стрелок при смене темы."""
+        if not hasattr(self, "canvas"):
+            return
+        
+        new_arrow_color = to_palette.get("ARROW_COLOR", Colors.ARROW_COLOR)
+        
+        for arrow_data in self.arrows:
+            arrow = arrow_data["arrow"]
+            # Обновляем цвет стрелки на цвет из темы
+            arrow.color = new_arrow_color
+            
+            # Перерисовываем стрелку с новым цветом
+            if arrow_data.get("line_id") or arrow_data.get("arrowhead_id"):
+                self.draw_arrow(arrow_data)
 
     def _update_theme_for_widget(self, widget, from_palette, to_palette):
         """
@@ -1787,9 +2128,11 @@ class IDEF0App:
         
         # Рисуем линию стрелки (увеличиваем толщину если стрелка выбрана)
         line_width = arrow.width + 2 if (self.selected_arrow and arrow_data == self.selected_arrow) else arrow.width
+        # Используем цвет стрелки (если он не установлен, используем цвет из темы)
+        arrow_color = arrow.color if arrow.color and arrow.color != Colors.ARROW_COLOR else Colors.ARROW_COLOR
         line_id = self.canvas.create_line(
             x1, y1, x2, y2,
-            fill=arrow.color,
+            fill=arrow_color,
             width=line_width,
             dash=dash,
             tags=("arrow_line", arrow.id)
@@ -1804,7 +2147,7 @@ class IDEF0App:
                 pass  # Элемент уже удален
         
         # Рисуем наконечник стрелки
-        arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow.color, arrow.width)
+        arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow_color, arrow.width)
         arrow_data["arrowhead_id"] = arrowhead_id
         
         # Сохраняем ID для обновления
@@ -1815,6 +2158,11 @@ class IDEF0App:
         self.canvas.tag_raise(line_id)
         if arrowhead_id:
             self.canvas.tag_raise(arrowhead_id)
+        
+        # Обновляем маркеры и кнопки, если стрелка выбрана
+        if self.selected_arrow == arrow_data:
+            self.update_arrow_drag_handles(arrow_data)
+            self.update_arrow_action_buttons_position(arrow_data)
         
         print(f"Нарисована стрелка {arrow.id}: ({x1:.1f}, {y1:.1f}) -> ({x2:.1f}, {y2:.1f})")
     
@@ -1916,7 +2264,8 @@ class IDEF0App:
             from_block_id=from_block_id,
             to_block_id=to_block_id,
             from_side=from_side,
-            to_side=to_side
+            to_side=to_side,
+            color=Colors.ARROW_COLOR  # Используем цвет из темы
         )
         
         arrow_data = {
@@ -1961,7 +2310,8 @@ class IDEF0App:
             from_side=from_side,
             to_side=None,
             x2=x,
-            y2=y
+            y2=y,
+            color=Colors.ARROW_COLOR  # Используем цвет из темы
         )
         
         arrow_data = {
@@ -2002,7 +2352,8 @@ class IDEF0App:
             from_side=None,
             to_side=to_side,
             x1=x,
-            y1=y
+            y1=y,
+            color=Colors.ARROW_COLOR  # Используем цвет из темы
         )
         
         arrow_data = {
@@ -2030,7 +2381,8 @@ class IDEF0App:
             x1=x1,
             y1=y1,
             x2=x2,
-            y2=y2
+            y2=y2,
+            color=Colors.ARROW_COLOR  # Используем цвет из темы
         )
         
         arrow_data = {
