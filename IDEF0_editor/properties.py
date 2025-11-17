@@ -158,13 +158,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_border_width(-1)
         )
         self.border_minus_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.apply_hover_effect(self.border_minus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(self.border_minus_btn)
 
         # Отображение текущей толщины
         self.border_width_label = tk.Label(
@@ -188,13 +188,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_border_width(1)
         )
         self.border_plus_btn.pack(side=tk.LEFT, padx=(8, 0))
-        self.apply_hover_effect(self.border_plus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(self.border_plus_btn)
     
     def create_arrow_properties(self, parent):
         """Карточка 'Свойства стрелки'"""
@@ -273,13 +273,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_arrow_width(-1)
         )
         self.arrow_width_minus_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.apply_hover_effect(self.arrow_width_minus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(self.arrow_width_minus_btn)
 
         # Отображение текущей толщины
         self.arrow_width_label = tk.Label(
@@ -303,13 +303,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_arrow_width(1)
         )
         self.arrow_width_plus_btn.pack(side=tk.LEFT, padx=(8, 0))
-        self.apply_hover_effect(self.arrow_width_plus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(self.arrow_width_plus_btn)
         
         # Стиль стрелки
         style_frame = tk.Frame(parent, bg=Colors.SURFACE)
@@ -375,10 +375,12 @@ class PropertiesPanel(tk.Frame):
             field_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground=Colors.BORDER
+            highlightbackground=Colors.BORDER,
+            insertbackground=Colors.TEXT_PRIMARY
         )
         entry.insert(0, placeholder)
         entry.pack(fill=tk.X, pady=(5, 0))
@@ -413,8 +415,11 @@ class PropertiesPanel(tk.Frame):
             combo_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
             relief="flat",
-            bd=0
+            bd=0,
+            highlightthickness=0,
+            insertbackground=Colors.TEXT_PRIMARY
         )
         if options:
             entry.insert(0, options[0])
@@ -447,10 +452,12 @@ class PropertiesPanel(tk.Frame):
             field_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground=Colors.BORDER
+            highlightbackground=Colors.BORDER,
+            insertbackground=Colors.TEXT_PRIMARY
         )
         entry.insert(0, value)
         entry.pack(fill=tk.X, padx=8, pady=(5, 0))
@@ -536,12 +543,21 @@ class PropertiesPanel(tk.Frame):
                 else:
                     swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
 
-    def apply_hover_effect(self, widget, base_bg, hover_bg):
-        """Базовый ховер-эффект - только смена цвета"""
+    def apply_hover_effect(self, widget, base_attr="SURFACE"):
+        """Ховер-эффект с учетом текущей темы"""
         def on_enter(_):
-            widget.configure(bg=hover_bg)
+            try:
+                widget.configure(bg=Colors.HOVER)
+            except tk.TclError:
+                pass
+
         def on_leave(_):
-            widget.configure(bg=base_bg)
+            base_color = getattr(Colors, base_attr, Colors.SURFACE)
+            try:
+                widget.configure(bg=base_color)
+            except tk.TclError:
+                pass
+
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
 

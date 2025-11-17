@@ -2,10 +2,13 @@
 Модели данных
 """
 
+from styles import Colors
+
+
 class Block:
     def __init__(self, block_id=None, name="Входит название...", code="A0", 
                  element_type="Выберите тип...", description="Входит основное элемента...",
-                 x=150, y=150, width=150, height=50, color="#E3F2FD", border_width=2):
+                 x=150, y=150, width=150, height=50, color=None, border_width=2):
         self.id = block_id
         self.name = name
         self.code = code
@@ -15,7 +18,7 @@ class Block:
         self.y = y
         self.width = width
         self.height = height
-        self.color = color
+        self.color = color or Colors.BLOCK_FILL
         self.border_width = border_width
     
     def to_dict(self):

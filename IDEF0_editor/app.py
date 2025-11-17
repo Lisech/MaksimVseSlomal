@@ -15,6 +15,15 @@ from models import Block, Arrow
 class IDEF0App:
     def __init__(self):
         self.root = tk.Tk()
+        # Текущая тема приложения (False = светлая, True = тёмная)
+        self.is_dark_theme = False
+        # Убедимся, что при старте используются цвета светлой темы
+        Colors.use_light()
+        # Кэши и привязки для иконок
+        self._icons = {}
+        self._icon_bindings = []
+        # Кнопки действий для выбранного блока (на холсте)
+        self.block_action_buttons = []
         self.setup_window()
         self.setup_ui()
         self.blocks = []
@@ -39,6 +48,7 @@ class IDEF0App:
         self.arrow_start_y = None  # начальная координата Y (если стрелка начинается не от блока)
         self.arrow_preview_line = None  # превью линии стрелки
         self.arrow_drawing = False  # флаг активного рисования стрелки
+        self.zoom_scale = 1.0  # текущий масштаб
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -66,6 +76,8 @@ class IDEF0App:
         )
         header_frame.pack(fill=tk.X)
         header_frame.pack_propagate(False)
+        # Сохраняем ссылку, чтобы обновлять цвета при смене темы
+        self.header_frame = header_frame
 
         # Title
         title_label = tk.Label(
@@ -80,20 +92,18 @@ class IDEF0App:
         # Toolbar buttons
         toolbar_frame = tk.Frame(header_frame, bg=Colors.SURFACE)
         toolbar_frame.pack(side=tk.LEFT, padx=12)
-
-        # Подготовка кэш-словаря для иконок
-        self._icons = getattr(self, '_icons', {})
+        self.toolbar_frame = toolbar_frame
 
         toolbar_buttons = [
             ("Новый", "FileText", (20,20)),
             ("Открыть", "FolderOpen", (20,20)),
             ("Сохранить", "Save", (20,20)),
-            ("Сохранить как", "Download", (20,20))
+            ("Сохранить как", "Download", (20,20)),
         ]
 
         for text, icon_name, size in toolbar_buttons:
-            icon = self.load_icon(icon_name, size)
-            btn = self.create_toolbar_button(toolbar_frame, text, icon)
+            btn = self.create_toolbar_button(toolbar_frame, text)
+            self.set_widget_icon(btn, icon_name, size, compound='left')
             btn.pack(side=tk.LEFT, padx=6)
 
         # Spacer
@@ -103,63 +113,73 @@ class IDEF0App:
         # Right controls
         right_frame = tk.Frame(header_frame, bg=Colors.SURFACE)
         right_frame.pack(side=tk.RIGHT, padx=14)
+        self.right_frame = right_frame
 
         # Zoom controls
         zoom_frame = tk.Frame(right_frame, bg=Colors.SURFACE)
         zoom_frame.pack(side=tk.LEFT, padx=(0, 12))
+        self.zoom_frame = zoom_frame
         
         # Zoom out button
-        zoom_out_icon = self.load_icon("ZoomOut", (16,16))
         zoom_out_btn = tk.Button(
             zoom_frame,
-            image=zoom_out_icon,
             bg=Colors.SURFACE,
             fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             padx=6,
             pady=4,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER
         )
-        zoom_out_btn.image = zoom_out_icon
+        self.set_widget_icon(zoom_out_btn, "ZoomOut", (16,16))
+        zoom_out_btn.configure(command=lambda: self.apply_zoom(0.9))
         zoom_out_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(zoom_out_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(zoom_out_btn)
         
         # Zoom percentage
-        tk.Label(zoom_frame, text="100%", bg=Colors.SURFACE, font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=4)
+        self.zoom_label = tk.Label(zoom_frame, text="100%", bg=Colors.SURFACE, font=("Segoe UI", 10))
+        self.zoom_label.pack(side=tk.LEFT, padx=4)
         
         # Zoom in button
-        zoom_in_icon = self.load_icon("ZoomIn", (16,16))
         zoom_in_btn = tk.Button(
             zoom_frame,
-            image=zoom_in_icon,
             bg=Colors.SURFACE,
             fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             padx=6,
             pady=4,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER
         )
-        zoom_in_btn.image = zoom_in_icon
+        self.set_widget_icon(zoom_in_btn, "ZoomIn", (16,16))
+        zoom_in_btn.configure(command=lambda: self.apply_zoom(1.1))
         zoom_in_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(zoom_in_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(zoom_in_btn)
 
         # Other buttons
         right_buttons = [("Обучение", "BookOpen"), ("Документация", "HelpCircle")]
         for text, icon_name in right_buttons:
-            icon = self.load_icon(icon_name, (20,20))
-            btn = self.create_toolbar_button(right_frame, text, icon)
+            btn = self.create_toolbar_button(right_frame, text)
+            self.set_widget_icon(btn, icon_name, (20,20), compound='left')
             btn.pack(side=tk.LEFT, padx=6)
 
-        settings_btn = self.create_toolbar_button(right_frame, "", self.load_icon("Settings", (20,20)))
-        settings_btn.pack(side=tk.LEFT, padx=6)
+        # Отдельная кнопка смены темы
+        self.theme_toggle_btn = self.create_toolbar_button(right_frame, "Тёмная тема")
+        self.theme_toggle_btn.configure(command=self.toggle_theme)
+        self.theme_toggle_btn.pack(side=tk.LEFT, padx=6)
+        self.update_theme_button_label()
 
-    def create_toolbar_button(self, parent, text, icon=None):
+        # Кнопка настроек (пока заглушка)
+        settings_btn = self.create_toolbar_button(right_frame, "")
+        self.set_widget_icon(settings_btn, "Settings", (20,20))
+        settings_btn.pack(side=tk.LEFT, padx=6)
+        self.settings_btn = settings_btn
+
+    def create_toolbar_button(self, parent, text):
         """Создает кнопку для тулбара в стиле HTML макета"""
         btn = tk.Button(
             parent,
@@ -171,20 +191,18 @@ class IDEF0App:
             bd=0,
             padx=12,
             pady=6,
-            activebackground="#e2e8f0",
+            activebackground=Colors.ACTIVE,
             highlightthickness=1,
             highlightbackground=Colors.BORDER
         )
-        if icon is not None:
-            btn.configure(image=icon, compound='left')
-            btn.image = icon  # сохранить ссылку, чтобы не удалился
-        self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+        self.apply_hover_effect(btn)
         return btn
 
     def setup_main_layout(self):
         """Основная layout-сетка как в HTML"""
         main_frame = tk.Frame(self.root, bg=Colors.BACKGROUND)
         main_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        self.main_frame = main_frame
 
         # Configure grid layout
         main_frame.columnconfigure(1, weight=1)
@@ -211,6 +229,7 @@ class IDEF0App:
         )
         sidebar_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
         sidebar_frame.pack_propagate(False)
+        self.sidebar_frame = sidebar_frame
 
         tools = [
             ("MousePointer2", "Выбрать"),
@@ -226,7 +245,6 @@ class IDEF0App:
         ]
 
         for i, (icon_name, tooltip) in enumerate(tools):
-            icon = self.load_icon(icon_name, (26, 26))
             btn = tk.Button(
                 sidebar_frame,
                 text="",
@@ -237,10 +255,10 @@ class IDEF0App:
                 bd=0,
                 highlightthickness=1,
                 highlightbackground=Colors.BORDER,
-                activebackground="#e2e8f0"
+                activebackground=Colors.ACTIVE
             )
-            btn.configure(image=icon, compound='center', padx=16, pady=16)
-            btn.image = icon
+            self.set_widget_icon(btn, icon_name, (26, 26), compound='center')
+            btn.configure(padx=16, pady=16)
 
             if icon_name == "MousePointer2":
                 btn.configure(command=self.enable_select_mode)
@@ -263,7 +281,7 @@ class IDEF0App:
                 btn.bind("<B1-Motion>", self.drag_from_sidebar)
                 btn.bind("<ButtonRelease-1>", self.end_drag_from_sidebar)
 
-            self.apply_hover_effect(btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
+            self.apply_hover_effect(btn, base_attr="SURFACE")
             btn.pack(pady=8)
 
     def start_drag_from_sidebar(self, event):
@@ -342,7 +360,7 @@ class IDEF0App:
         x - width / 2, y - height / 2,
         x + width / 2, y + height / 2,
         fill=block_model.color,
-        outline=Colors.TEXT_PRIMARY,
+        outline=Colors.BLOCK_BORDER,
         width=block_model.border_width,  # ← использовать border_width из модели
         tags=("block", block_id)
         )
@@ -353,6 +371,7 @@ class IDEF0App:
             x, y,
             text=block_model.name,
             font=("Segoe UI", 10),
+            fill=Colors.TEXT_PRIMARY,
             justify="center",
             tags=("block_text", block_id)
         )
@@ -638,9 +657,10 @@ class IDEF0App:
                 # Обновляем стрелки, соединенные с этим блоком
                 self.update_arrows_for_block(block_data["id"])
 
-                # Обновляем свойства позиции
+                # Обновляем свойства позиции и позицию кнопок действий
                 if self.selected_block == block_data:
                     self.properties_panel.update_properties(block_data["model"])
+                    self.update_block_action_buttons_position(block_data)
                 
                 # Останавливаем распространение события
                 return "break"
@@ -659,11 +679,13 @@ class IDEF0App:
         
         def arrow_click(event):
             """Обработчик клика по блоку в режиме рисования стрелок"""
-            # В новом режиме рисования стрелок клик обрабатывается в on_canvas_click
-            # Этот обработчик больше не используется, но оставляем для совместимости
+            # В режиме рисования стрелок — пропускаем дальше (обработает on_canvas_click)
             if self.current_mode == "draw_arrow":
-                # Разрешаем обработку в on_canvas_click
                 return None
+            # В обычном режиме выбора — сразу выбираем блок по одиночному клику
+            if self.current_mode == "select":
+                self.select_block(block_data)
+                return "break"
             return None
 
         # Привязываем обработчики событий
@@ -679,8 +701,14 @@ class IDEF0App:
         """Выбирает блок и обновляет панель свойств"""
         # Сбрасываем выделение предыдущего блока
         if self.selected_block:
-            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            prev_model = self.selected_block["model"]
+            self.canvas.itemconfig(
+                self.selected_block["rect_id"],
+                outline=Colors.BLOCK_BORDER,
+                width=prev_model.border_width
+            )
             self.delete_resize_handles(self.selected_block)
+            self.hide_block_action_buttons()
         
         # Сбрасываем выделение стрелки, если была выбрана
         if self.selected_arrow:
@@ -692,6 +720,9 @@ class IDEF0App:
         
         # Создаем маркеры изменения размера
         self.create_resize_handles(block_data)
+
+        # Кнопки действий справа от блока
+        self.show_block_action_buttons(block_data)
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(block_data["model"])
@@ -706,9 +737,15 @@ class IDEF0App:
         
         # Сбрасываем выделение блока, если был выбран
         if self.selected_block:
-            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            prev_model = self.selected_block["model"]
+            self.canvas.itemconfig(
+                self.selected_block["rect_id"],
+                outline=Colors.BLOCK_BORDER,
+                width=prev_model.border_width
+            )
             self.delete_resize_handles(self.selected_block)
             self.selected_block = None
+            self.hide_block_action_buttons()
         
         # Выделяем новую стрелку
         self.selected_arrow = arrow_data
@@ -804,11 +841,15 @@ class IDEF0App:
             
             print(f"Обновлена стрелка {element.id}: {update_data}")
 
-    def load_icon(self, name, size):
+    def load_icon(self, name, size, force_original=False):
         """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
         Поддерживает имена вида Name.png, Name (1).png, Name (2).png.
+
+        force_original=True — не перекрашивать иконку в тёмной теме
+        (оставить исходные цвета PNG, например зелёный/красный).
         """
-        cache_key = f"{name}_{size[0]}x{size[1]}"
+        theme_key = "orig" if force_original else ("dark" if self.is_dark_theme else "light")
+        cache_key = f"{name}_{size[0]}x{size[1]}_{theme_key}"
         if cache_key in self._icons:
             return self._icons[cache_key]
         base_dir = os.path.dirname(__file__)
@@ -821,7 +862,10 @@ class IDEF0App:
         try:
             if path is None:
                 raise FileNotFoundError
-            img = Image.open(path).resize(size, Image.LANCZOS)
+            img = Image.open(path).convert("RGBA").resize(size, Image.LANCZOS)
+            # Для тёмной темы перекрашиваем в белый только если не запрошен оригинал
+            if self.is_dark_theme and not force_original:
+                img = self._recolor_icon(img, (255, 255, 255, 255))
             self._icons[cache_key] = ImageTk.PhotoImage(img)
         except Exception:
             from PIL import Image as PILImage
@@ -829,6 +873,14 @@ class IDEF0App:
             fallback = PILImage.new("RGBA", size, (0, 0, 0, 0))
             self._icons[cache_key] = ImageTk.PhotoImage(fallback)
         return self._icons[cache_key]
+
+    def _recolor_icon(self, image, rgba_color):
+        """Возвращает копию изображения, закрашенную указанным цветом с сохранением альфы."""
+        base = Image.new("RGBA", image.size, rgba_color)
+        alpha = image.getchannel("A") if "A" in image.getbands() else None
+        if alpha is not None:
+            base.putalpha(alpha)
+        return base
 
     def setup_canvas(self, parent):
         """Область холста с сеткой и A0 блоком"""
@@ -841,6 +893,7 @@ class IDEF0App:
             highlightbackground=Colors.BORDER
         )
         canvas_frame.grid(row=0, column=1, sticky="nsew", padx=12)
+        self.canvas_frame = canvas_frame
 
         # Canvas с прокруткой
         self.canvas = tk.Canvas(
@@ -880,6 +933,11 @@ class IDEF0App:
         # Привязка к событиям клавиатуры
         self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
         self.canvas.bind_all("<KeyRelease-space>", self.on_space_release)
+        # Масштабирование колесиком с Ctrl
+        self.canvas.bind_all("<Control-MouseWheel>", self.on_ctrl_mousewheel)
+        # Для трекпадов/альтернатив (Linux/X11 могут использовать Button-4/5 с Control)
+        self.canvas.bind_all("<Control-Button-4>", lambda e: self.on_ctrl_scroll_steps(1))
+        self.canvas.bind_all("<Control-Button-5>", lambda e: self.on_ctrl_scroll_steps(-1))
 
         # Обработчик клика по пустому месту для сброса выделения
         self.canvas.bind("<Button-1>", self.on_canvas_click)
@@ -892,6 +950,414 @@ class IDEF0App:
         # Привязываем обработчики для выбора стрелок
         self.canvas.tag_bind("arrow_line", "<Button-1>", self.on_arrow_click)
         self.canvas.tag_bind("arrow_arrowhead", "<Button-1>", self.on_arrow_click)
+
+    # --- Кнопки действий для блока (переместить / копировать / удалить) ---
+
+    def show_block_action_buttons(self, block_data):
+        """Создаёт три кнопки справа от выбранного блока на холсте."""
+        if not hasattr(self, "canvas"):
+            return
+
+        self.hide_block_action_buttons()
+
+        model = block_data["model"]
+        # Правая граница блока + отступ
+        base_x = model.x + model.width / 2 + 24
+        base_y = model.y
+        spacing = 32  # расстояние между кнопками
+
+        # Используем ваши PNG: ожидатся файлы без фона в папке img:
+        # Close.png (красный крест), Copy.png (две страницы), Moved.png (зелёный крест-стрелки)
+        buttons_spec = [
+            ("move", "Переместить", "Moved"),
+            ("copy", "Копировать", "Copy"),
+            ("delete", "Удалить", "Close"),
+        ]
+
+        self.block_action_buttons = []
+
+        for index, (action, tooltip, icon_name) in enumerate(buttons_spec):
+            # Текстовые подписи для кнопок возле блока
+            if action == "move":
+                btn_text = ""
+            elif action == "copy":
+                btn_text = ""
+            else:
+                btn_text = ""
+            btn = tk.Button(
+                self.canvas,
+                bg=Colors.SURFACE,  # совпадает с цветом холста
+                fg=Colors.TEXT_PRIMARY,
+                relief="flat",
+                bd=0,
+                padx=0,
+                pady=0,
+                activebackground=Colors.SURFACE,
+                highlightthickness=0,
+                text=btn_text,
+            )
+            # Иконка с вашим PNG (файлы Name.png / Name (1).png / Name (2).png в папке img)
+            # Показываем и иконку, и текст (слева иконка, справа подпись 1 / Copy / Close)
+            compound = "left" if btn_text else "center"
+            self.set_widget_icon(btn, icon_name, (24, 24), compound=compound, force_original=True)
+
+            if action == "move":
+                # Перемещение самого блока при перетаскивании иконки
+                def start_move(ev, b=block_data):
+                    self._move_icon_state = {
+                        "block": b,
+                        "start_x": ev.x_root,
+                        "start_y": ev.y_root,
+                        "orig_x": b["model"].x,
+                        "orig_y": b["model"].y,
+                    }
+
+                def do_move(ev, b=block_data):
+                    state = getattr(self, "_move_icon_state", None)
+                    if not state or state.get("block") is not b:
+                        return
+                    dx = ev.x_root - state["start_x"]
+                    dy = ev.y_root - state["start_y"]
+
+                    model = b["model"]
+                    model.x = state["orig_x"] + dx
+                    model.y = state["orig_y"] + dy
+
+                    # Обновляем положение прямоугольника и текста
+                    self.update_block_visual(b)
+                    # Обновляем панель свойств
+                    if self.selected_block == b:
+                        self.properties_panel.update_properties(model)
+                    # Обновляем кнопки действий
+                    self.update_block_action_buttons_position(b)
+
+                def end_move(_ev, b=block_data):
+                    state = getattr(self, "_move_icon_state", None)
+                    if state and state.get("block") is b:
+                        self._move_icon_state = None
+
+                btn.bind("<ButtonPress-1>", start_move)
+                btn.bind("<B1-Motion>", do_move)
+                btn.bind("<ButtonRelease-1>", end_move)
+
+            elif action == "copy":
+                btn.configure(command=lambda b=block_data: self.copy_block(b))
+            elif action == "delete":
+                btn.configure(command=lambda b=block_data: self.delete_block_direct(b))
+
+            # Для этих кнопок не меняем фон при наведении — только PNG-иконка
+            self.apply_hover_effect(btn, enable=False)
+
+            # Позиционируем кнопку в canvas
+            y = base_y + (index - 1) * spacing
+            win_id = self.canvas.create_window(
+                base_x,
+                y,
+                window=btn,
+                anchor="w",
+                tags=("block_action", f"block_actions_{block_data['id']}"),
+            )
+            self.block_action_buttons.append({"window_id": win_id, "button": btn, "action": action})
+
+    def update_block_action_buttons_position(self, block_data):
+        """Обновляет позицию кнопок действий при перемещении/изменении блока."""
+        if not self.block_action_buttons or self.selected_block != block_data:
+            return
+        model = block_data["model"]
+        base_x = model.x + model.width / 2 + 24
+        base_y = model.y
+        spacing = 32
+
+        for index, data in enumerate(self.block_action_buttons):
+            y = base_y + (index - 1) * spacing
+            try:
+                self.canvas.coords(data["window_id"], base_x, y)
+            except tk.TclError:
+                continue
+
+    def hide_block_action_buttons(self):
+        """Удаляет кнопки действий для блока с холста."""
+        if not hasattr(self, "canvas"):
+            self.block_action_buttons = []
+            return
+        for data in self.block_action_buttons:
+            try:
+                if data.get("window_id"):
+                    self.canvas.delete(data["window_id"])
+            except tk.TclError:
+                pass
+            btn = data.get("button")
+            if btn is not None and btn.winfo_exists():
+                btn.destroy()
+        self.block_action_buttons = []
+
+    def copy_block(self, block_data):
+        """Создаёт копию блока рядом с исходным."""
+        model = block_data["model"]
+        offset = 30
+        self.create_block_at_position(model.x + offset, model.y + offset)
+
+    def delete_block_direct(self, block_data):
+        """Удаление конкретного блока по кнопке (не затрагивает выбранную стрелку)."""
+        if block_data not in self.blocks:
+            return
+        # Если этот блок выбран — обновим состояние
+        if self.selected_block == block_data:
+            self.selected_block = None
+            self.properties_panel.update_properties(None)
+        # Удаляем стрелки, соединенные с этим блоком
+        block_id = block_data["id"]
+        arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
+        for arrow_data in arrows_to_remove:
+            self.delete_arrow(arrow_data)
+        # Удаляем сам блок
+        self.canvas.delete(block_data["rect_id"])
+        self.canvas.delete(block_data["text_id"])
+        self.delete_resize_handles(block_data)
+        if block_data in self.blocks:
+            self.blocks.remove(block_data)
+        self.hide_block_action_buttons()
+
+    def set_widget_icon(self, widget, icon_name, size, compound=None, force_original=False):
+        """
+        Назначает иконку виджету и регистрирует связь для автоперерисовки
+        при смене темы.
+        """
+        icon = self.load_icon(icon_name, size, force_original=force_original)
+        widget.configure(image=icon)
+        if compound:
+            widget.configure(compound=compound)
+        widget.image = icon
+
+        # Запоминаем связь, чтобы можно было обновить иконку после смены темы
+        binding = next((b for b in self._icon_bindings if b["widget"] == widget), None)
+        data = {
+            "widget": widget,
+            "icon_name": icon_name,
+            "size": size,
+            "compound": compound,
+            "force_original": force_original,
+        }
+        if binding:
+            binding.update(data)
+        else:
+            self._icon_bindings.append(data)
+
+    def refresh_icons_for_theme(self):
+        """Перезагружает иконки с учётом текущей темы."""
+        for binding in list(self._icon_bindings):
+            widget = binding["widget"]
+            if not widget.winfo_exists():
+                continue
+            icon = self.load_icon(
+                binding["icon_name"],
+                binding["size"],
+                force_original=binding.get("force_original", False),
+            )
+            widget.configure(image=icon)
+            if binding.get("compound"):
+                widget.configure(compound=binding["compound"])
+            widget.image = icon
+
+    def toggle_theme(self):
+        """
+        Переключение темы между светлой и тёмной.
+
+        Мы меняем палитру в `Colors`, затем проходим по всем виджетам
+        и обновляем их фоны/цвет текста, а также перерисовываем сетку.
+        """
+        # Определяем исходную и целевую палитру
+        if self.is_dark_theme:
+            from_palette = Colors.DARK
+            Colors.use_light()
+            to_palette = Colors.LIGHT
+            self.is_dark_theme = False
+            print("Переключение на светлую тему")
+        else:
+            from_palette = Colors.LIGHT
+            Colors.use_dark()
+            to_palette = Colors.DARK
+            self.is_dark_theme = True
+            print("Переключение на тёмную тему")
+
+        # Обновляем фон главного окна
+        try:
+            if self.root.cget("bg") == from_palette["BACKGROUND"]:
+                self.root.configure(bg=to_palette["BACKGROUND"])
+        except tk.TclError:
+            pass
+
+        # Рекурсивно обновляем все виджеты
+        self._update_theme_for_widget(self.root, from_palette, to_palette)
+
+        # Применяем цвета к блокам и текстам
+        self.apply_theme_to_blocks(from_palette, to_palette)
+
+        # Перерисовываем иконки
+        self.refresh_icons_for_theme()
+
+        # Перерисовываем сетку с новыми цветами
+        if hasattr(self, "canvas"):
+            self.draw_grid()
+
+        self.update_theme_button_label()
+
+    def update_theme_button_label(self):
+        """Обновляет подпись кнопки переключения темы."""
+        if not hasattr(self, "theme_toggle_btn"):
+            return
+        text = "Светлая тема" if self.is_dark_theme else "Тёмная тема"
+        self.theme_toggle_btn.config(text=text)
+
+    def apply_theme_to_blocks(self, from_palette, to_palette):
+        """Обновляет цвета блоков и текста на canvas при смене темы."""
+        if not hasattr(self, "canvas"):
+            return
+
+        from_fill = (from_palette.get("BLOCK_FILL") or "").lower()
+        from_border = (from_palette.get("BLOCK_BORDER") or "").lower()
+        new_fill = to_palette.get("BLOCK_FILL", Colors.BLOCK_FILL)
+        new_border = to_palette.get("BLOCK_BORDER", Colors.BLOCK_BORDER)
+        new_text = to_palette.get("TEXT_PRIMARY", Colors.TEXT_PRIMARY)
+
+        for block_data in self.blocks:
+            rect_id = block_data["rect_id"]
+            text_id = block_data["text_id"]
+
+            current_fill = self.canvas.itemcget(rect_id, "fill").lower()
+            if current_fill == from_fill:
+                self.canvas.itemconfig(rect_id, fill=new_fill)
+                block_data["model"].color = new_fill
+
+            current_outline = self.canvas.itemcget(rect_id, "outline").lower()
+            if self.selected_block == block_data:
+                self.canvas.itemconfig(rect_id, outline=Colors.PRIMARY, width=3)
+                # Пересоздаем маркеры resize, чтобы цвета соответствовали теме
+                self.delete_resize_handles(block_data)
+                self.create_resize_handles(block_data)
+            else:
+                if current_outline == from_border:
+                    self.canvas.itemconfig(rect_id, outline=new_border,
+                                           width=block_data["model"].border_width)
+
+            # Обновляем цвет текста блока
+            self.canvas.itemconfig(text_id, fill=new_text)
+
+    def _update_theme_for_widget(self, widget, from_palette, to_palette):
+        """
+        Рекурсивно обновляет цвета виджета и всех его потомков.
+
+        Подход простой: если текущий bg/fg совпадает с цветом старой темы,
+        заменяем его на соответствующий цвет новой темы.
+        """
+        # Фон
+        for key in ("BACKGROUND", "SURFACE", "SIDEBAR", "HOVER"):
+            try:
+                current_bg = widget.cget("bg")
+            except tk.TclError:
+                current_bg = None
+            if current_bg == from_palette.get(key):
+                try:
+                    widget.configure(bg=to_palette.get(key))
+                except tk.TclError:
+                    pass
+
+        # Цвет текста
+        for key in ("TEXT_PRIMARY", "TEXT_SECONDARY"):
+            try:
+                current_fg = widget.cget("fg")
+            except tk.TclError:
+                current_fg = None
+            if current_fg == from_palette.get(key):
+                try:
+                    widget.configure(fg=to_palette.get(key))
+                except tk.TclError:
+                    pass
+
+        # Границы/обводка/активный фон — по возможности тоже обновляем
+        try:
+            hb = widget.cget("highlightbackground")
+            if hb == from_palette.get("BORDER"):
+                widget.configure(highlightbackground=to_palette.get("BORDER"))
+        except tk.TclError:
+            pass
+
+        try:
+            ab = widget.cget("activebackground")
+            for key in ("SURFACE", "HOVER", "ACTIVE"):
+                if ab == from_palette.get(key):
+                    widget.configure(activebackground=to_palette.get(key))
+                    break
+        except tk.TclError:
+            pass
+
+        try:
+            ib = widget.cget("insertbackground")
+            if ib == from_palette.get("TEXT_PRIMARY"):
+                widget.configure(insertbackground=to_palette.get("TEXT_PRIMARY"))
+        except tk.TclError:
+            pass
+
+        # Рекурсивно обрабатываем детей
+        for child in widget.winfo_children():
+            self._update_theme_for_widget(child, from_palette, to_palette)
+
+    def on_ctrl_mousewheel(self, event):
+        """Масштабирование при Ctrl + колесо мыши с центрированием на курсоре"""
+        # На Windows delta кратна 120
+        delta = 1 if event.delta > 0 else -1
+        factor = 1.1 if delta > 0 else 0.9
+        self.apply_zoom(factor, anchor_screen=(event.x, event.y))
+
+    def on_ctrl_scroll_steps(self, steps):
+        """Fallback для систем, где колесо приходит как Button-4/5"""
+        factor = 1.1 if steps > 0 else 0.9
+        # Центр по текущему положению курсора относительно canvas
+        try:
+            x = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx()
+            y = self.canvas.winfo_pointery() - self.canvas.winfo_rooty()
+        except Exception:
+            x, y = self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2
+        self.apply_zoom(factor, anchor_screen=(x, y))
+
+    def apply_zoom(self, factor, anchor_screen=None):
+        """Применяет масштабирование ко всем элементам canvas"""
+        # Ограничиваем общий масштаб
+        new_scale = self.zoom_scale * factor
+        new_scale = max(0.2, min(4.0, new_scale))
+        # Нормализуем фактор если достигли границ
+        if abs(new_scale - self.zoom_scale) < 1e-6:
+            return
+        norm_factor = new_scale / self.zoom_scale
+
+        # Точка якоря в координатах canvas
+        if anchor_screen is None:
+            cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+            cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+        else:
+            sx, sy = anchor_screen
+            cx = self.canvas.canvasx(sx)
+            cy = self.canvas.canvasy(sy)
+
+        # Масштабируем все элементы
+        self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
+
+        # Перерисовываем/обновляем элементы, чувствительные к масштабу
+        # Текст в Tk не масштабируется шрифтом — оставляем как есть для простоты
+
+        # Пересчёт границ прокрутки по содержимому
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            self.canvas.configure(scrollregion=bbox)
+
+        # Обновляем текущий масштаб и UI
+        self.zoom_scale = new_scale
+        percent = int(round(self.zoom_scale * 100))
+        if hasattr(self, "zoom_label"):
+            self.zoom_label.config(text=f"{percent}%")
+        if hasattr(self, "footer_label"):
+            base = "Диаграмма: Пример IDEF0 | Масштаб: "
+            self.footer_label.config(text=f"{base}{percent}%")
 
     def on_space_press(self, event):
         """Обработчик нажатия пробела - временное включение панорамирования"""
@@ -971,9 +1437,15 @@ class IDEF0App:
             # Если клик был не по блоку, маркеру или стрелке - сбрасываем выделение
             if not block_or_handle_clicked and not arrow_clicked:
                 if self.selected_block:
-                    self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+                    prev_model = self.selected_block["model"]
+                    self.canvas.itemconfig(
+                        self.selected_block["rect_id"],
+                        outline=Colors.BLOCK_BORDER,
+                        width=prev_model.border_width
+                    )
                     self.delete_resize_handles(self.selected_block)
                     self.selected_block = None
+                    self.hide_block_action_buttons()
                 if self.selected_arrow:
                     self.deselect_arrow()
                     self.properties_panel.update_properties(None)
@@ -1203,12 +1675,27 @@ class IDEF0App:
         else:
             return (x, y)
 
-    def apply_hover_effect(self, widget, base_bg, hover_bg):
-        """Базовый ховер-эффект - только смена цвета"""
+    def apply_hover_effect(self, widget, base_attr="SURFACE", enable=True):
+        """Ховер-эффект с учетом текущей темы.
+
+        Для «чистых» иконок без фона можно передать enable=False.
+        """
+        if not enable:
+            return
+
         def on_enter(_):
-            widget.configure(bg=hover_bg)
+            try:
+                widget.configure(bg=Colors.HOVER)
+            except tk.TclError:
+                pass
+
         def on_leave(_):
-            widget.configure(bg=base_bg)
+            base_color = getattr(Colors, base_attr, Colors.SURFACE)
+            try:
+                widget.configure(bg=base_color)
+            except tk.TclError:
+                pass
+
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
     
@@ -1573,6 +2060,7 @@ class IDEF0App:
             self.blocks.remove(self.selected_block)
             self.selected_block = None
             self.properties_panel.update_properties(None)
+            self.hide_block_action_buttons()
             print(f"Блок удален")
         elif self.selected_arrow:
             # Удаляем стрелку
