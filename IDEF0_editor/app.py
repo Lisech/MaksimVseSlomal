@@ -322,16 +322,15 @@ class IDEF0App:
 
         # Рисуем прямоугольник
         rect = self.canvas.create_rectangle(
-        x - width / 2, y - height / 2,
-        x + width / 2, y + height / 2,
-        fill=block_model.color,
-        outline=Colors.TEXT_PRIMARY,
-        width=block_model.border_width,  # ← использовать border_width из модели
-        tags=("block", block_id)
+            x - width / 2, y - height / 2,
+            x + width / 2, y + height / 2,
+            fill=block_model.color,
+            outline=Colors.TEXT_PRIMARY,
+            width=block_model.border_width,
+            tags=("block", block_id)
         )
-        
 
-        # Добавляем текст
+        # Добавляем основной текст
         text = self.canvas.create_text(
             x, y,
             text=block_model.name,
@@ -340,13 +339,25 @@ class IDEF0App:
             tags=("block_text", block_id)
         )
 
+        # Добавляем код в правом нижнем углу (полупрозрачный)
+        code_x, code_y = block_model.get_code_position()
+        code_text = self.canvas.create_text(
+            code_x, code_y,
+            text=block_model.code,
+            font=("Segoe UI", 8),
+            fill="#666666",  # Серый полупрозрачный цвет
+            anchor="se",  # Привязка к юго-восточному углу
+            tags=("block_code", block_id)
+        )
+
         # Сохраняем информацию о блоке
         block_data = {
             "id": block_id,
             "model": block_model,
             "rect_id": rect,
             "text_id": text,
-            "resize_handles": {}  # маркеры изменения размера
+            "code_text_id": code_text,  # Добавляем ID текста с кодом
+            "resize_handles": {}
         }
 
         self.blocks.append(block_data)
@@ -532,7 +543,7 @@ class IDEF0App:
             self.canvas.delete(self.resize_preview)
             self.resize_preview = None
             
-            # Обновляем визуальное представление блока
+            # Обновляем визуальное представление блока (включая код)
             self.update_block_visual(block_data)
             
             # Обновляем свойства
@@ -555,8 +566,12 @@ class IDEF0App:
         y2 = model.y + model.height / 2
         self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
         
-        # Обновляем текст
+        # Обновляем основной текст
         self.canvas.coords(block_data["text_id"], model.x, model.y)
+        
+        # Обновляем позицию кода (абсолютные координаты)
+        code_x, code_y = model.get_code_position()
+        self.canvas.coords(block_data["code_text_id"], code_x, code_y)
         
         # Обновляем маркеры изменения размера
         if block_data == self.selected_block:
@@ -576,6 +591,7 @@ class IDEF0App:
 
         def drag(event):
             if (self.current_mode == "select" and 
+                not self.is_panning and
                 self.dragging_block == block_data and 
                 "drag_data" in block_data):
                 # Преобразуем координаты мыши в координаты холста
@@ -590,9 +606,10 @@ class IDEF0App:
                 block_data["model"].x += dx
                 block_data["model"].y += dy
 
-                # Перемещаем прямоугольник и текст
+                # Перемещаем ВСЕ элементы блока
                 self.canvas.move(block_data["rect_id"], dx, dy)
                 self.canvas.move(block_data["text_id"], dx, dy)
+                self.canvas.move(block_data["code_text_id"], dx, dy)  # Добавляем перемещение кода
 
                 # Обновляем маркеры изменения размера
                 if block_data == self.selected_block:
@@ -622,7 +639,14 @@ class IDEF0App:
                 return "break"
 
         # Привязываем обработчики событий
-        for item_id in [block_data["rect_id"], block_data["text_id"]]:
+        for item_id in [block_data["rect_id"], block_data["text_id"], block_data["code_text_id"]]:
+            self.canvas.tag_unbind(item_id, "<ButtonPress-1>")
+            self.canvas.tag_unbind(item_id, "<B1-Motion>")
+            self.canvas.tag_unbind(item_id, "<ButtonRelease-1>")
+            self.canvas.tag_unbind(item_id, "<Double-Button-1>")
+
+        # Привязываем новые обработчики событий ко всем элементам блока
+        for item_id in [block_data["rect_id"], block_data["text_id"], block_data["code_text_id"]]:
             self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
             self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
             self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
@@ -632,12 +656,12 @@ class IDEF0App:
         """Выбирает блок и обновляет панель свойств"""
         # Сбрасываем выделение предыдущего блока
         if self.selected_block:
-            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=2)
+            self.canvas.itemconfig(self.selected_block["rect_id"], outline=Colors.TEXT_PRIMARY, width=self.selected_block["model"].border_width)
             self.delete_resize_handles(self.selected_block)
         
         # Выделяем новый блок
         self.selected_block = block_data
-        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=block_data["model"].border_width + 1)  # Немного толще для выделения
         
         # Создаем маркеры изменения размера
         self.create_resize_handles(block_data)
@@ -659,6 +683,13 @@ class IDEF0App:
             if "name" in update_data:
                 self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
             
+            if "code" in update_data:
+                # Обновляем текст кода
+                self.canvas.itemconfig(block_data["code_text_id"], text=update_data["code"])
+                # Обновляем позицию кода (на случай изменения размера)
+                code_x, code_y = block.get_code_position()
+                self.canvas.coords(block_data["code_text_id"], code_x, code_y)
+            
             if "color" in update_data:
                 self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
             
@@ -674,7 +705,7 @@ class IDEF0App:
                 self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=block.border_width)
                 # Обновляем маркеры изменения размера
                 self.create_resize_handles(block_data)
-            
+        
         print(f"Обновлен блок {block_data['id']}: {update_data}")
 
     def load_icon(self, name, size):
