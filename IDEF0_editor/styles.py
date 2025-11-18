@@ -1,108 +1,20 @@
 """
-Стили и темы для IDEF0 Editor.
-
-Добавлена поддержка светлой и тёмной темы с возможностью
-переключения во время работы приложения.
+Стили для IDEF0 Editor - точная копия HTML макета
 """
 
-
 class Colors:
-    """
-    Глобальные цвета темы.
+    # Основные цвета из HTML макета
+    BACKGROUND = "#f6f7f9"
+    SURFACE = "#ffffff"
+    TEXT_PRIMARY = "#1f2328"
+    TEXT_SECONDARY = "#7a7f87"
+    PRIMARY = "#2d7ef7"  # Добавлен синий цвет для выделения
+    BORDER = "#edf1f5"  # более тусклая светло‑серая граница
+    SIDEBAR = "#0f172a"
 
-    Значения этих полей меняются методами `use_light` / `use_dark`,
-    а остальной код просто использует `Colors.BACKGROUND` и т.п.
-    """
-
-    # Палитра светлой темы
-    LIGHT = {
-        "BACKGROUND": "#f6f7f9",
-        "SURFACE": "#ffffff",
-        "TEXT_PRIMARY": "#1f2328",
-        "TEXT_SECONDARY": "#7a7f87",
-        "PRIMARY": "#2d7ef7",
-        "BORDER": "#edf1f5",
-        "SIDEBAR": "#0f172a",
-        "GRID": "#f0f0f0",
-        "GRID_STRONG": "#e8e8e8",
-        "HOVER": "#e2e8f0",
-        "ACTIVE": "#e2e8f0",
-        "BLOCK_FILL": "#E3F2FD",
-        "BLOCK_BORDER": "#1f2328",
-        "ARROW_COLOR": "#000000",
-    }
-
-    # Палитра тёмной темы (подобрана под стиль макета)
-    DARK = {
-        "BACKGROUND": "#020617",      # общий фон окна
-        "SURFACE": "#020617",         # панели / хедер / холст
-        "TEXT_PRIMARY": "#ffffff",
-        "TEXT_SECONDARY": "#cbd5f5",
-        "PRIMARY": "#3b82f6",
-        "BORDER": "#1f2937",
-        "SIDEBAR": "#020617",
-        "GRID": "#111827",
-        "GRID_STRONG": "#1f2937",
-        "HOVER": "#1f2937",
-        "ACTIVE": "#1f2937",
-        "BLOCK_FILL": "#0f172a",
-        "BLOCK_BORDER": "#ffffff",
-        "ARROW_COLOR": "#ffffff",
-    }
-
-    # Текущие значения (будут переопределены при вызове use_light/use_dark)
-    BACKGROUND = LIGHT["BACKGROUND"]
-    SURFACE = LIGHT["SURFACE"]
-    TEXT_PRIMARY = LIGHT["TEXT_PRIMARY"]
-    TEXT_SECONDARY = LIGHT["TEXT_SECONDARY"]
-    PRIMARY = LIGHT["PRIMARY"]
-    BORDER = LIGHT["BORDER"]
-    SIDEBAR = LIGHT["SIDEBAR"]
-    GRID = LIGHT["GRID"]
-    GRID_STRONG = LIGHT["GRID_STRONG"]
-    HOVER = LIGHT["HOVER"]
-    ACTIVE = LIGHT["ACTIVE"]
-    BLOCK_FILL = LIGHT["BLOCK_FILL"]
-    BLOCK_BORDER = LIGHT["BLOCK_BORDER"]
-    ARROW_COLOR = LIGHT["ARROW_COLOR"]
-
-    @classmethod
-    def use_light(cls):
-        """Переключить глобальные цвета на светлую тему."""
-        palette = cls.LIGHT
-        cls.BACKGROUND = palette["BACKGROUND"]
-        cls.SURFACE = palette["SURFACE"]
-        cls.TEXT_PRIMARY = palette["TEXT_PRIMARY"]
-        cls.TEXT_SECONDARY = palette["TEXT_SECONDARY"]
-        cls.PRIMARY = palette["PRIMARY"]
-        cls.BORDER = palette["BORDER"]
-        cls.SIDEBAR = palette["SIDEBAR"]
-        cls.GRID = palette["GRID"]
-        cls.GRID_STRONG = palette["GRID_STRONG"]
-        cls.HOVER = palette["HOVER"]
-        cls.ACTIVE = palette["ACTIVE"]
-        cls.BLOCK_FILL = palette["BLOCK_FILL"]
-        cls.BLOCK_BORDER = palette["BLOCK_BORDER"]
-        cls.ARROW_COLOR = palette["ARROW_COLOR"]
-
-    @classmethod
-    def use_dark(cls):
-        """Переключить глобальные цвета на тёмную тему."""
-        palette = cls.DARK
-        cls.BACKGROUND = palette["BACKGROUND"]
-        cls.SURFACE = palette["SURFACE"]
-        cls.TEXT_PRIMARY = palette["TEXT_PRIMARY"]
-        cls.TEXT_SECONDARY = palette["TEXT_SECONDARY"]
-        cls.PRIMARY = palette["PRIMARY"]
-        cls.BORDER = palette["BORDER"]
-        cls.SIDEBAR = palette["SIDEBAR"]
-        cls.GRID = palette["GRID"]
-        cls.GRID_STRONG = palette["GRID_STRONG"]
-        cls.HOVER = palette["HOVER"]
-        cls.ACTIVE = palette["ACTIVE"]
-        cls.BLOCK_FILL = palette["BLOCK_FILL"]
-        cls.BLOCK_BORDER = palette["BLOCK_BORDER"]
-        cls.ARROW_COLOR = palette["ARROW_COLOR"]
+    # Grid colors - заменяем RGBA на HEX
+    GRID = "#f0f0f0"           # вместо rgba(0,0,0,0.04)
+    GRID_STRONG = "#e8e8e8"    # вместо rgba(0,0,0,0.06)
 
 class Dimensions:
     # Window
