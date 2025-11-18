@@ -240,7 +240,7 @@ class IDEF0App:
             ("Hand", "Перемещать"),
             ("Square", "Добавить блок"),
             ("ArrowRight", "Добавить стрелку"),
-            ("Move", "Переместить"),
+            ("Moved", "Переместить"),
             ("Type", "Текст"),
             ("Layers", "Слои"),
             ("ChevronUp", "На передний план"),
@@ -261,7 +261,13 @@ class IDEF0App:
                 highlightbackground=Colors.BORDER,
                 activebackground=Colors.ACTIVE
             )
-            self.set_widget_icon(btn, icon_name, (26, 26), compound='center')
+            theme_colors = None
+            if icon_name == "Moved":
+                theme_colors = {
+                    "light": (0, 0, 0, 255),
+                    "dark": (255, 255, 255, 255)
+                }
+            self.set_widget_icon(btn, icon_name, (26, 26), compound='center', theme_colors=theme_colors)
             btn.configure(padx=16, pady=16)
 
             if icon_name == "MousePointer2":
@@ -275,6 +281,12 @@ class IDEF0App:
             
             if icon_name == "Trash2":
                 btn.configure(command=self.delete_selected)
+
+            if icon_name == "ChevronUp":
+                btn.configure(command=self.bring_selected_forward)
+
+            if icon_name == "ChevronDown":
+                btn.configure(command=self.send_selected_backward)
 
             # Привязываем обработчики для кнопки добавления блока ТОЛЬКО drag-and-drop
             if icon_name == "Square":
@@ -852,7 +864,7 @@ class IDEF0App:
             
             print(f"Обновлена стрелка {element.id}: {update_data}")
 
-    def load_icon(self, name, size, force_original=False):
+    def load_icon(self, name, size, force_original=False, recolor=None):
         """Загрузка PNG-иконки с безопасным фолбеком и кэшем.
         Поддерживает имена вида Name.png, Name (1).png, Name (2).png.
 
@@ -860,7 +872,10 @@ class IDEF0App:
         (оставить исходные цвета PNG, например зелёный/красный).
         """
         theme_key = "orig" if force_original else ("dark" if self.is_dark_theme else "light")
-        cache_key = f"{name}_{size[0]}x{size[1]}_{theme_key}"
+        recolor_key = ""
+        if recolor:
+            recolor_key = f"_{recolor[0]}_{recolor[1]}_{recolor[2]}_{recolor[3]}"
+        cache_key = f"{name}_{size[0]}x{size[1]}_{theme_key}{recolor_key}"
         if cache_key in self._icons:
             return self._icons[cache_key]
         base_dir = os.path.dirname(__file__)
@@ -874,8 +889,11 @@ class IDEF0App:
             if path is None:
                 raise FileNotFoundError
             img = Image.open(path).convert("RGBA").resize(size, Image.LANCZOS)
+            # Если явно задан цвет перекраски — используем его
+            if recolor:
+                img = self._recolor_icon(img, recolor)
             # Для тёмной темы перекрашиваем в белый только если не запрошен оригинал
-            if self.is_dark_theme and not force_original:
+            elif self.is_dark_theme and not force_original:
                 img = self._recolor_icon(img, (255, 255, 255, 255))
             self._icons[cache_key] = ImageTk.PhotoImage(img)
         except Exception:
@@ -1440,12 +1458,16 @@ class IDEF0App:
             del arrow_data["drag_data"]
         self.dragging_arrow_end = None
 
-    def set_widget_icon(self, widget, icon_name, size, compound=None, force_original=False):
+    def set_widget_icon(self, widget, icon_name, size, compound=None, force_original=False, theme_colors=None):
         """
         Назначает иконку виджету и регистрирует связь для автоперерисовки
         при смене темы.
         """
-        icon = self.load_icon(icon_name, size, force_original=force_original)
+        recolor = None
+        if theme_colors:
+            theme_key = "dark" if self.is_dark_theme else "light"
+            recolor = theme_colors.get(theme_key)
+        icon = self.load_icon(icon_name, size, force_original=force_original, recolor=recolor)
         widget.configure(image=icon)
         if compound:
             widget.configure(compound=compound)
@@ -1459,6 +1481,7 @@ class IDEF0App:
             "size": size,
             "compound": compound,
             "force_original": force_original,
+            "theme_colors": theme_colors,
         }
         if binding:
             binding.update(data)
@@ -1471,10 +1494,16 @@ class IDEF0App:
             widget = binding["widget"]
             if not widget.winfo_exists():
                 continue
+            recolor = None
+            theme_colors = binding.get("theme_colors")
+            if theme_colors:
+                theme_key = "dark" if self.is_dark_theme else "light"
+                recolor = theme_colors.get(theme_key)
             icon = self.load_icon(
                 binding["icon_name"],
                 binding["size"],
                 force_original=binding.get("force_original", False),
+                recolor=recolor,
             )
             widget.configure(image=icon)
             if binding.get("compound"):
@@ -2059,6 +2088,119 @@ class IDEF0App:
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
         for i in range(top, bottom, 100):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
+
+        # Отправляем сетку под все элементы, чтобы она не перекрывала объекты
+        try:
+            self.canvas.tag_lower('grid')
+        except tk.TclError:
+            pass
+
+    def _ensure_grid_at_bottom(self):
+        """Гарантируем, что сетка остаётся под всеми элементами."""
+        if hasattr(self, "canvas"):
+            try:
+                self.canvas.tag_lower('grid')
+            except tk.TclError:
+                pass
+
+    def bring_selected_forward(self):
+        """Поднимает выбранный элемент (блок или стрелку) на передний план."""
+        if self.selected_block:
+            self._raise_block(self.selected_block)
+        elif self.selected_arrow:
+            self._raise_arrow(self.selected_arrow)
+
+    def send_selected_backward(self):
+        """Опускает выбранный элемент (блок или стрелку) на задний план (но над сеткой)."""
+        if self.selected_block:
+            self._lower_block(self.selected_block)
+        elif self.selected_arrow:
+            self._lower_arrow(self.selected_arrow)
+        self._ensure_grid_at_bottom()
+
+    def _raise_block(self, block_data):
+        """Поднимает указанный блок и связанные элементы."""
+        try:
+            self.canvas.tag_raise(block_data["rect_id"])
+            self.canvas.tag_raise(block_data["text_id"])
+            for handle_id in block_data.get("resize_handles", {}).values():
+                self.canvas.tag_raise(handle_id)
+        except tk.TclError:
+            pass
+
+        if self.selected_block == block_data:
+            for btn_data in self.block_action_buttons:
+                try:
+                    self.canvas.tag_raise(btn_data.get("window_id"))
+                except tk.TclError:
+                    pass
+
+    def _lower_block(self, block_data):
+        """Опускает указанный блок и связанные элементы."""
+        try:
+            self.canvas.tag_lower(block_data["rect_id"])
+            self.canvas.tag_lower(block_data["text_id"])
+            for handle_id in block_data.get("resize_handles", {}).values():
+                self.canvas.tag_lower(handle_id)
+        except tk.TclError:
+            pass
+
+        if self.selected_block == block_data:
+            for btn_data in self.block_action_buttons:
+                try:
+                    self.canvas.tag_lower(btn_data.get("window_id"))
+                except tk.TclError:
+                    pass
+
+    def _raise_arrow(self, arrow_data):
+        """Поднимает стрелку и её вспомогательные элементы."""
+        try:
+            if arrow_data.get("line_id"):
+                self.canvas.tag_raise(arrow_data["line_id"])
+            if arrow_data.get("arrowhead_id"):
+                self.canvas.tag_raise(arrow_data["arrowhead_id"])
+        except tk.TclError:
+            pass
+
+        handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
+        if handles:
+            for handle_id in handles.values():
+                try:
+                    self.canvas.tag_raise(handle_id)
+                except tk.TclError:
+                    pass
+
+        if self.selected_arrow == arrow_data:
+            for btn_data in self.arrow_action_buttons:
+                try:
+                    self.canvas.tag_raise(btn_data.get("window_id"))
+                except tk.TclError:
+                    pass
+
+    def _lower_arrow(self, arrow_data):
+        """Опускает стрелку и её вспомогательные элементы."""
+        try:
+            if arrow_data.get("line_id"):
+                self.canvas.tag_lower(arrow_data["line_id"])
+            if arrow_data.get("arrowhead_id"):
+                self.canvas.tag_lower(arrow_data["arrowhead_id"])
+        except tk.TclError:
+            pass
+
+        handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
+        if handles:
+            for handle_id in handles.values():
+                try:
+                    self.canvas.tag_lower(handle_id)
+                except tk.TclError:
+                    pass
+
+        if self.selected_arrow == arrow_data:
+            for btn_data in self.arrow_action_buttons:
+                try:
+                    self.canvas.tag_lower(btn_data.get("window_id"))
+                except tk.TclError:
+                    pass
     
     def draw_arrow(self, arrow_data):
         """
