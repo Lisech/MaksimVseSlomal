@@ -125,3 +125,30 @@ class LayerManager:
     def get_current_level_key(self):
         """Возвращает уникальный ключ для текущего уровня"""
         return "->".join(self.current_level_path) if self.current_level_path else "root"
+    def build_hierarchy_tree(self, all_blocks):
+        """Строит иерархическое дерево всех блоков"""
+        def build_tree(parent_id=None, level=0):
+            children = []
+            for block in all_blocks:
+                if block.parent_id == parent_id:
+                    child_data = {
+                        'block': block,
+                        'level': level,
+                        'children': build_tree(block.id, level + 1)
+                    }
+                    children.append(child_data)
+            return children
+        
+        return build_tree()
+
+    def goto_level_path(self, target_path):
+        """Переход на указанный путь уровней"""
+        self.current_level_path = target_path.copy()
+
+    def save_level_state(self, level_key, state):
+        """Сохраняет состояние уровня"""
+        self.level_history[level_key] = state
+    
+    def get_level_state(self, level_key):
+        """Возвращает сохраненное состояние уровня"""
+        return self.level_history.get(level_key)
