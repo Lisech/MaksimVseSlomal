@@ -4,7 +4,6 @@
 
 import tkinter as tk
 from styles import Colors, Dimensions, Fonts
-from models import Block, Arrow
 
 class PropertiesPanel(tk.Frame):
     def __init__(self, parent, on_properties_change=None):
@@ -22,7 +21,6 @@ class PropertiesPanel(tk.Frame):
         
         # Текущая толщина границы
         self.current_border_width = 2
-        self.current_arrow_width = 2
         
         self.setup_ui()
 
@@ -31,51 +29,45 @@ class PropertiesPanel(tk.Frame):
         content_frame = tk.Frame(self, bg=Colors.BACKGROUND)
         content_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
 
-        # Карточка свойств элемента (для блоков)
-        self.element_properties_card = self.create_card(content_frame, "Свойства элемента")
-        self.create_element_properties(self.element_properties_card)
+        # Карточка свойств элемента
+        self.create_element_properties(content_frame)
 
-        # Карточка позиции и размера (для блоков)
-        self.position_card = self.create_card(content_frame, "Позиция и размер")
-        self.create_position_card(self.position_card)
+        # Карточка позиции и размера
+        self.create_position_card(content_frame)
 
-        # Карточка стиля (для блоков)
-        self.style_card = self.create_card(content_frame, "Стиль")
-        self.create_style_card(self.style_card)
-        
-        # Карточка свойств стрелки (для стрелок)
-        self.arrow_properties_card = self.create_card(content_frame, "Свойства стрелки")
-        self.create_arrow_properties(self.arrow_properties_card)
-        
-        # Скрываем карточку стрелок по умолчанию
-        self.arrow_properties_card.pack_forget()
+        # Карточка стиля
+        self.create_style_card(content_frame)
 
     def create_element_properties(self, parent):
         """Карточка 'Свойства элемента'"""
+        card = self.create_card(parent, "Свойства элемента")
+
         # Поле Название
-        self.create_field(parent, "Название", "name", "Введите название...")
+        self.create_field(card, "Название", "name", "Введите название...")
 
         # Поле Код
-        self.create_field(parent, "Код", "code", "A0")
+        self.create_field(card, "Код", "code", "A0")
 
         # Поле Тип элемента
-        self.create_select_field(parent, "Тип элемента", "element_type", 
+        self.create_select_field(card, "Тип элемента", "element_type", 
                                ["Выберите тип", "Процесс", "Функция", "Действие", "Операция"])
 
         # Поле Описание
-        self.create_field(parent, "Описание", "description", "Введите описание элемента...")
+        self.create_field(card, "Описание", "description", "Введите описание элемента...")
 
     def create_position_card(self, parent):
         """Карточка 'Позиция и размер'"""
+        card = self.create_card(parent, "Позиция и размер")
+
         # Строка X, Y
-        row1 = tk.Frame(parent, bg=Colors.SURFACE)
+        row1 = tk.Frame(card, bg=Colors.SURFACE)
         row1.pack(fill=tk.X, padx=14, pady=(0, 12))
 
         self.create_small_field(row1, "X", "x", "100", 0)
         self.create_small_field(row1, "Y", "y", "150", 1)
 
         # Строка Ширина, Высота
-        row2 = tk.Frame(parent, bg=Colors.SURFACE)
+        row2 = tk.Frame(card, bg=Colors.SURFACE)
         row2.pack(fill=tk.X, padx=14)
 
         self.create_small_field(row2, "Ширина", "width", "150", 0)
@@ -83,8 +75,10 @@ class PropertiesPanel(tk.Frame):
 
     def create_style_card(self, parent):
         """Карточка 'Стиль'"""
+        card = self.create_card(parent, "Стиль")
+
         # Цвет заливки
-        color_frame = tk.Frame(parent, bg=Colors.SURFACE)
+        color_frame = tk.Frame(card, bg=Colors.SURFACE)
         color_frame.pack(fill=tk.X, pady=(0, 10))
 
         tk.Label(
@@ -132,7 +126,7 @@ class PropertiesPanel(tk.Frame):
             self.color_swatches[color] = swatch
 
         # Толщина границы
-        border_frame = tk.Frame(parent, bg=Colors.SURFACE)
+        border_frame = tk.Frame(card, bg=Colors.SURFACE)
         border_frame.pack(fill=tk.X, padx=14, pady=(0, 12))
 
         tk.Label(
@@ -158,13 +152,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground=Colors.ACTIVE,
+            activebackground="#e2e8f0",
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_border_width(-1)
         )
         self.border_minus_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.apply_hover_effect(self.border_minus_btn)
+        self.apply_hover_effect(self.border_minus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
 
         # Отображение текущей толщины
         self.border_width_label = tk.Label(
@@ -188,144 +182,13 @@ class PropertiesPanel(tk.Frame):
             bd=0,
             width=3,
             height=1,
-            activebackground=Colors.ACTIVE,
+            activebackground="#e2e8f0",
             highlightthickness=1,
             highlightbackground=Colors.BORDER,
             command=lambda: self.change_border_width(1)
         )
         self.border_plus_btn.pack(side=tk.LEFT, padx=(8, 0))
-        self.apply_hover_effect(self.border_plus_btn)
-    
-    def create_arrow_properties(self, parent):
-        """Карточка 'Свойства стрелки'"""
-        # Цвет стрелки
-        color_frame = tk.Frame(parent, bg=Colors.SURFACE)
-        color_frame.pack(fill=tk.X, pady=(0, 10))
-
-        tk.Label(
-            color_frame,
-            text="Цвет стрелки",
-            font=Fonts.SMALL,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_SECONDARY
-        ).pack(anchor="w")
-
-        # Цветовые образцы для стрелок
-        colors_frame = tk.Frame(color_frame, bg=Colors.SURFACE)
-        colors_frame.pack(fill=tk.X, padx=14, pady=(5, 0))
-
-        arrow_colors = [
-            ("#000000", "black"),
-            ("#2d7ef7", "blue"),
-            ("#ff0000", "red"),
-            ("#00aa00", "green"),
-            ("#ff8800", "orange"),
-            ("#8800ff", "purple"),
-            ("#666666", "gray")
-        ]
-
-        self.arrow_color_swatches = {}
-        for color, name in arrow_colors:
-            swatch_frame = tk.Frame(colors_frame, bg=Colors.SURFACE)
-            swatch_frame.pack(side=tk.LEFT, padx=(0, 10), pady=2)
-            
-            swatch = tk.Frame(
-                swatch_frame,
-                bg=color,
-                width=30,
-                height=24,
-                relief="flat",
-                bd=0,
-                highlightthickness=1,
-                highlightbackground=Colors.BORDER
-            )
-            swatch.pack()
-            swatch.pack_propagate(False)
-            
-            # Привязываем обработчик клика
-            swatch.bind("<Button-1>", lambda e, c=color: self.on_arrow_color_selected(c))
-            self.arrow_color_swatches[color] = swatch
-
-        # Толщина стрелки
-        width_frame = tk.Frame(parent, bg=Colors.SURFACE)
-        width_frame.pack(fill=tk.X, padx=14, pady=(0, 12))
-
-        tk.Label(
-            width_frame,
-            text="Толщина стрелки",
-            font=Fonts.SMALL,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_SECONDARY
-        ).pack(anchor="w")
-
-        # Контейнер для элементов управления толщиной
-        width_controls_frame = tk.Frame(width_frame, bg=Colors.SURFACE)
-        width_controls_frame.pack(fill=tk.X, pady=(5, 0))
-
-        # Кнопка уменьшения
-        self.arrow_width_minus_btn = tk.Button(
-            width_controls_frame,
-            text="-",
-            font=("Segoe UI", 12, "bold"),
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            width=3,
-            height=1,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=lambda: self.change_arrow_width(-1)
-        )
-        self.arrow_width_minus_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.apply_hover_effect(self.arrow_width_minus_btn)
-
-        # Отображение текущей толщины
-        self.arrow_width_label = tk.Label(
-            width_controls_frame,
-            text="2px",
-            font=("Segoe UI", 11),
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            width=6
-        )
-        self.arrow_width_label.pack(side=tk.LEFT, padx=4)
-
-        # Кнопка увеличения
-        self.arrow_width_plus_btn = tk.Button(
-            width_controls_frame,
-            text="+",
-            font=("Segoe UI", 12, "bold"),
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            width=3,
-            height=1,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=lambda: self.change_arrow_width(1)
-        )
-        self.arrow_width_plus_btn.pack(side=tk.LEFT, padx=(8, 0))
-        self.apply_hover_effect(self.arrow_width_plus_btn)
-        
-        # Стиль стрелки
-        style_frame = tk.Frame(parent, bg=Colors.SURFACE)
-        style_frame.pack(fill=tk.X, padx=14, pady=(0, 12))
-
-        tk.Label(
-            style_frame,
-            text="Стиль линии",
-            font=Fonts.SMALL,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_SECONDARY
-        ).pack(anchor="w")
-
-        # Выпадающий список для стиля
-        self.create_select_field(style_frame, "", "arrow_style", 
-                               ["solid", "dashed", "dotted"])
+        self.apply_hover_effect(self.border_plus_btn, base_bg=Colors.SURFACE, hover_bg="#e2e8f0")
 
     def create_card(self, parent, title):
         """Создает карточку с заголовком"""
@@ -375,12 +238,10 @@ class PropertiesPanel(tk.Frame):
             field_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            insertbackground=Colors.TEXT_PRIMARY
+            highlightbackground=Colors.BORDER
         )
         entry.insert(0, placeholder)
         entry.pack(fill=tk.X, pady=(5, 0))
@@ -415,11 +276,8 @@ class PropertiesPanel(tk.Frame):
             combo_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
             relief="flat",
-            bd=0,
-            highlightthickness=0,
-            insertbackground=Colors.TEXT_PRIMARY
+            bd=0
         )
         if options:
             entry.insert(0, options[0])
@@ -452,12 +310,10 @@ class PropertiesPanel(tk.Frame):
             field_frame,
             font=Fonts.BODY,
             bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
             relief="flat",
             bd=0,
             highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            insertbackground=Colors.TEXT_PRIMARY
+            highlightbackground=Colors.BORDER
         )
         entry.insert(0, value)
         entry.pack(fill=tk.X, padx=8, pady=(5, 0))
@@ -481,19 +337,6 @@ class PropertiesPanel(tk.Frame):
             if self.current_block and self.on_properties_change:
                 update_data = {"border_width": new_width}
                 self.on_properties_change(self.current_block, update_data)
-    
-    def change_arrow_width(self, delta):
-        """Изменение толщины стрелки"""
-        new_width = self.current_arrow_width + delta
-        # Ограничиваем диапазон от 1 до 10 пикселей
-        if 1 <= new_width <= 10:
-            self.current_arrow_width = new_width
-            self.arrow_width_label.config(text=f"{new_width}px")
-            
-            # Отправляем изменение в стрелку
-            if self.current_block and isinstance(self.current_block, Arrow) and self.on_properties_change:
-                update_data = {"width": new_width}
-                self.on_properties_change(self.current_block, update_data)
 
     def on_field_changed(self, field_name, value):
         """Обработчик изменения значения в поле"""
@@ -505,20 +348,13 @@ class PropertiesPanel(tk.Frame):
                 except ValueError:
                     return  # Неправильное числовое значение, игнорируем
             
-            # Для стиля стрелки
-            if field_name == "arrow_style":
-                if isinstance(self.current_block, Arrow):
-                    update_data = {"style": value}
-                    self.on_properties_change(self.current_block, update_data)
-                return
-            
             # Обновляем данные в текущем блоке
             update_data = {field_name: value}
             self.on_properties_change(self.current_block, update_data)
 
     def on_color_selected(self, color):
-        """Обработчик выбора цвета блока"""
-        if self.current_block and isinstance(self.current_block, Block) and self.on_properties_change:
+        """Обработчик выбора цвета"""
+        if self.current_block and self.on_properties_change:
             update_data = {"color": color}
             self.on_properties_change(self.current_block, update_data)
             
@@ -529,51 +365,22 @@ class PropertiesPanel(tk.Frame):
                     swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
                 else:
                     swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
-    
-    def on_arrow_color_selected(self, color):
-        """Обработчик выбора цвета стрелки"""
-        if self.current_block and isinstance(self.current_block, Arrow) and self.on_properties_change:
-            update_data = {"color": color}
-            self.on_properties_change(self.current_block, update_data)
-            
-            # Обновляем выделение цвета в панели
-            for swatch_color, swatch in self.arrow_color_swatches.items():
-                if swatch_color == color:
-                    swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
-                else:
-                    swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
 
-    def apply_hover_effect(self, widget, base_attr="SURFACE"):
-        """Ховер-эффект с учетом текущей темы"""
+    def apply_hover_effect(self, widget, base_bg, hover_bg):
+        """Базовый ховер-эффект - только смена цвета"""
         def on_enter(_):
-            try:
-                widget.configure(bg=Colors.HOVER)
-            except tk.TclError:
-                pass
-
+            widget.configure(bg=hover_bg)
         def on_leave(_):
-            base_color = getattr(Colors, base_attr, Colors.SURFACE)
-            try:
-                widget.configure(bg=base_color)
-            except tk.TclError:
-                pass
-
+            widget.configure(bg=base_bg)
         widget.bind("<Enter>", on_enter)
         widget.bind("<Leave>", on_leave)
 
-    def update_properties(self, element):
-        """Обновляет панель свойств для выбранного элемента (блока или стрелки)"""
-        self.current_block = element
+    def update_properties(self, block):
+        """Обновляет панель свойств для выбранного блока"""
+        self.current_block = block
         
-        # Скрываем/показываем карточки в зависимости от типа элемента
-        if element is None:
-            # Скрываем все карточки
-            self.element_properties_card.pack_forget()
-            self.position_card.pack_forget()
-            self.style_card.pack_forget()
-            self.arrow_properties_card.pack_forget()
-            
-            # Сбрасываем поля
+        if block is None:
+            # Сбрасываем поля если блок не выбран
             for field_name, entry in self.fields.items():
                 entry.delete(0, tk.END)
                 # Устанавливаем значения по умолчанию
@@ -603,57 +410,22 @@ class PropertiesPanel(tk.Frame):
                 swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
             return
         
-        # Определяем тип элемента
-        if isinstance(element, Block):
-            # Показываем карточки для блока
-            self.element_properties_card.pack(fill=tk.X, pady=(0, 16))
-            self.position_card.pack(fill=tk.X, pady=(0, 16))
-            self.style_card.pack(fill=tk.X, pady=(0, 16))
-            self.arrow_properties_card.pack_forget()
-            
-            # Обновляем поля значениями из блока
-            block_data = element.to_dict()
-            for field_name, entry in self.fields.items():
-                if field_name in block_data:
-                    entry.delete(0, tk.END)
-                    entry.insert(0, str(block_data[field_name]))
-            
-            # Обновляем толщину границы
-            if "border_width" in block_data:
-                self.current_border_width = block_data["border_width"]
-                self.border_width_label.config(text=f"{self.current_border_width}px")
-            
-            # Подсвечиваем выбранный цвет
-            current_color = block_data.get("color", "#E3F2FD")
-            for color, swatch in self.color_swatches.items():
-                if color == current_color:
-                    swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
-                else:
-                    swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
+        # Обновляем поля значениями из блока
+        block_data = block.to_dict()
+        for field_name, entry in self.fields.items():
+            if field_name in block_data:
+                entry.delete(0, tk.END)
+                entry.insert(0, str(block_data[field_name]))
         
-        elif isinstance(element, Arrow):
-            # Показываем карточки для стрелки
-            self.element_properties_card.pack_forget()
-            self.position_card.pack_forget()
-            self.style_card.pack_forget()
-            self.arrow_properties_card.pack(fill=tk.X, pady=(0, 16))
-            
-            # Обновляем свойства стрелки
-            arrow_data = element.to_dict()
-            
-            # Обновляем толщину стрелки
-            self.current_arrow_width = arrow_data.get("width", 2)
-            self.arrow_width_label.config(text=f"{self.current_arrow_width}px")
-            
-            # Обновляем стиль стрелки
-            if "arrow_style" in self.fields:
-                self.fields["arrow_style"].delete(0, tk.END)
-                self.fields["arrow_style"].insert(0, arrow_data.get("style", "solid"))
-            
-            # Подсвечиваем выбранный цвет стрелки
-            current_color = arrow_data.get("color", "#000000")
-            for color, swatch in self.arrow_color_swatches.items():
-                if color == current_color:
-                    swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
-                else:
-                    swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
+        # Обновляем толщину границы
+        if "border_width" in block_data:
+            self.current_border_width = block_data["border_width"]
+            self.border_width_label.config(text=f"{self.current_border_width}px")
+        
+        # Подсвечиваем выбранный цвет - ВАЖНО: делаем это сразу
+        current_color = block_data.get("color", "#E3F2FD")
+        for color, swatch in self.color_swatches.items():
+            if color == current_color:
+                swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
+            else:
+                swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
