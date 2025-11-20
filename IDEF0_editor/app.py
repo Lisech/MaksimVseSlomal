@@ -24,6 +24,10 @@ class IDEF0App:
         self._icon_bindings = []
         # Кнопки действий для выбранного блока (на холсте)
         self.block_action_buttons = []
+        # Стеки для undo/redo (инициализируем до setup_ui)
+        self.undo_stack = []  # стек для отмены действий
+        self.redo_stack = []  # стек для повтора действий
+        self.max_history_size = 50  # максимальный размер истории
         self.setup_window()
         self.setup_ui()
         self.blocks = []
@@ -71,6 +75,9 @@ class IDEF0App:
 
         # Main layout
         self.setup_main_layout()
+        
+        # Инициализируем состояние кнопок undo/redo
+        self.update_undo_redo_buttons()
 
     def setup_header(self):
         """Верхняя панель как в HTML макете"""
@@ -112,6 +119,47 @@ class IDEF0App:
             btn = self.create_toolbar_button(toolbar_frame, text)
             self.set_widget_icon(btn, icon_name, size, compound='left')
             btn.pack(side=tk.LEFT, padx=6)
+        
+        # Разделитель перед undo/redo
+        separator = tk.Frame(toolbar_frame, bg=Colors.BORDER, width=1)
+        separator.pack(side=tk.LEFT, padx=6, fill=tk.Y, pady=4)
+        
+        # Кнопки Undo и Redo
+        undo_btn = tk.Button(
+            toolbar_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.undo
+        )
+        self.set_widget_icon(undo_btn, "Undo", (20, 20))
+        undo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(undo_btn)
+        self.undo_btn = undo_btn
+        
+        redo_btn = tk.Button(
+            toolbar_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.redo
+        )
+        self.set_widget_icon(redo_btn, "Redo", (20, 20))
+        redo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(redo_btn)
+        self.redo_btn = redo_btn
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -412,6 +460,9 @@ class IDEF0App:
         # Автоматически выбираем новый блок
         self.select_block(block_data)
 
+        # Сохраняем состояние для undo
+        self.save_state()
+
         print(f"Добавлен новый блок через drag-and-drop: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
 
@@ -606,6 +657,9 @@ class IDEF0App:
             del block_data["resize_data"]
             self.resizing_block = None
             
+            # Сохраняем состояние для undo
+            self.save_state()
+            
             print(f"Блок {block_data['id']} изменен до размера {model.width}x{model.height}")
 
     def update_block_visual(self, block_data):
@@ -688,6 +742,10 @@ class IDEF0App:
             if self.dragging_block == block_data and "drag_data" in block_data:
                 del block_data["drag_data"]
                 self.dragging_block = None
+                
+                # Сохраняем состояние для undo
+                self.save_state()
+                
                 print(f"Блок {block_data['id']} перемещен в ({block_data['model'].x:.1f}, {block_data['model'].y:.1f})")
 
         def double_click(event):
@@ -1477,6 +1535,9 @@ class IDEF0App:
         """Завершение перетаскивания точки изгиба стрелки"""
         if "bend_drag_data" in arrow_data:
             del arrow_data["bend_drag_data"]
+            
+            # Сохраняем состояние для undo
+            self.save_state()
     
     def start_arrow_drag(self, event, arrow_data, end_type):
         """Начало перетаскивания конца стрелки."""
@@ -1630,6 +1691,9 @@ class IDEF0App:
         if "drag_data" in arrow_data:
             del arrow_data["drag_data"]
         self.dragging_arrow_end = None
+        
+        # Сохраняем состояние для undo
+        self.save_state()
     
     def show_attachment_points(self, exclude_block_id=None):
         """
@@ -2153,6 +2217,9 @@ class IDEF0App:
             self.arrow_start_x = None
             self.arrow_start_y = None
             self.arrow_drawing = False
+            
+            # Сохраняем состояние для undo
+            self.save_state()
             
             # Переключаем режим на начальный (select) после создания стрелки
             self.enable_select_mode()
@@ -2874,12 +2941,20 @@ class IDEF0App:
             self.selected_block = None
             self.properties_panel.update_properties(None)
             self.hide_block_action_buttons()
+            
+            # Сохраняем состояние для undo
+            self.save_state()
+            
             print(f"Блок удален")
         elif self.selected_arrow:
             # Удаляем стрелку
             self.delete_arrow(self.selected_arrow)
             self.selected_arrow = None
             self.properties_panel.update_properties(None)
+            
+            # Сохраняем состояние для undo
+            self.save_state()
+            
             print(f"Стрелка удалена")
     
     def delete_arrow(self, arrow_data):
@@ -2900,6 +2975,281 @@ class IDEF0App:
             self.canvas.delete(arrow_data["arrowhead_id"])
         if arrow_data in self.arrows:
             self.arrows.remove(arrow_data)
+    
+    def save_state(self):
+        """Сохраняет текущее состояние для undo/redo"""
+        state = {
+            "blocks": [],
+            "arrows": [],
+            "next_block_id": self.next_block_id,
+            "next_arrow_id": self.next_arrow_id
+        }
+        
+        # Сохраняем все блоки
+        for block_data in self.blocks:
+            block = block_data["model"]
+            state["blocks"].append({
+                "id": block.id,
+                "name": block.name,
+                "code": block.code,
+                "element_type": block.element_type,
+                "description": block.description,
+                "x": block.x,
+                "y": block.y,
+                "width": block.width,
+                "height": block.height,
+                "color": block.color,
+                "border_width": block.border_width
+            })
+        
+        # Сохраняем все стрелки
+        for arrow_data in self.arrows:
+            arrow = arrow_data["arrow"]
+            state["arrows"].append({
+                "id": arrow.id,
+                "from_block_id": arrow.from_block_id,
+                "to_block_id": arrow.to_block_id,
+                "from_side": arrow.from_side,
+                "to_side": arrow.to_side,
+                "from_attachment_point": arrow.from_attachment_point,
+                "to_attachment_point": arrow.to_attachment_point,
+                "color": arrow.color,
+                "width": arrow.width,
+                "style": arrow.style,
+                "x1": arrow.x1,
+                "y1": arrow.y1,
+                "x2": arrow.x2,
+                "y2": arrow.y2,
+                "bend_x": arrow.bend_x,
+                "bend_y": arrow.bend_y
+            })
+        
+        # Добавляем в стек undo
+        self.undo_stack.append(state)
+        
+        # Ограничиваем размер стека
+        if len(self.undo_stack) > self.max_history_size:
+            self.undo_stack.pop(0)
+        
+        # Очищаем redo при новом действии
+        self.redo_stack = []
+        
+        # Обновляем состояние кнопок
+        self.update_undo_redo_buttons()
+    
+    def restore_state(self, state):
+        """Восстанавливает состояние из сохраненного снимка"""
+        # Очищаем текущее состояние
+        for block_data in self.blocks:
+            try:
+                self.canvas.delete(block_data["rect_id"])
+                self.canvas.delete(block_data["text_id"])
+            except tk.TclError:
+                pass
+        
+        for arrow_data in self.arrows:
+            try:
+                if arrow_data.get("line_id"):
+                    self.canvas.delete(arrow_data["line_id"])
+                if arrow_data.get("hitbox_id"):
+                    self.canvas.delete(arrow_data["hitbox_id"])
+                if arrow_data.get("arrowhead_id"):
+                    self.canvas.delete(arrow_data["arrowhead_id"])
+            except tk.TclError:
+                pass
+        
+        # Восстанавливаем счетчики
+        self.next_block_id = state["next_block_id"]
+        self.next_arrow_id = state["next_arrow_id"]
+        
+        # Очищаем списки
+        self.blocks = []
+        self.arrows = []
+        self.selected_block = None
+        self.selected_arrow = None
+        
+        # Восстанавливаем блоки
+        for block_dict in state["blocks"]:
+            block = Block(
+                block_id=block_dict["id"],
+                name=block_dict["name"],
+                code=block_dict["code"],
+                element_type=block_dict["element_type"],
+                description=block_dict["description"],
+                x=block_dict["x"],
+                y=block_dict["y"],
+                width=block_dict["width"],
+                height=block_dict["height"],
+                color=block_dict["color"],
+                border_width=block_dict["border_width"]
+            )
+            
+            # Создаем визуальное представление
+            x1 = block.x - block.width / 2
+            y1 = block.y - block.height / 2
+            x2 = block.x + block.width / 2
+            y2 = block.y + block.height / 2
+            
+            rect = self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                fill=block.color,
+                outline=Colors.BLOCK_BORDER,
+                width=block.border_width,
+                tags=("block", block.id)
+            )
+            
+            text = self.canvas.create_text(
+                block.x, block.y,
+                text=block.name,
+                font=("Segoe UI", 10),
+                fill=Colors.TEXT_PRIMARY,
+                justify="center",
+                tags=("block_text", block.id)
+            )
+            
+            block_data = {
+                "id": block.id,
+                "model": block,
+                "rect_id": rect,
+                "text_id": text,
+                "resize_handles": {}
+            }
+            
+            self.blocks.append(block_data)
+            self.make_block_interactive(block_data)
+        
+        # Восстанавливаем стрелки
+        for arrow_dict in state["arrows"]:
+            arrow = Arrow(
+                arrow_id=arrow_dict["id"],
+                from_block_id=arrow_dict["from_block_id"],
+                to_block_id=arrow_dict["to_block_id"],
+                from_side=arrow_dict["from_side"],
+                to_side=arrow_dict["to_side"],
+                color=arrow_dict["color"],
+                width=arrow_dict["width"],
+                style=arrow_dict["style"],
+                x1=arrow_dict["x1"],
+                y1=arrow_dict["y1"],
+                x2=arrow_dict["x2"],
+                y2=arrow_dict["y2"]
+            )
+            arrow.from_attachment_point = arrow_dict.get("from_attachment_point")
+            arrow.to_attachment_point = arrow_dict.get("to_attachment_point")
+            arrow.bend_x = arrow_dict.get("bend_x")
+            arrow.bend_y = arrow_dict.get("bend_y")
+            
+            arrow_data = {
+                "arrow": arrow
+            }
+            
+            self.arrows.append(arrow_data)
+            self.draw_arrow(arrow_data)
+        
+        # Обновляем панель свойств
+        self.properties_panel.update_properties(None)
+    
+    def undo(self):
+        """Отменяет последнее действие"""
+        if not self.undo_stack:
+            return
+        
+        # Сохраняем текущее состояние в redo
+        current_state = self.save_current_state()
+        if current_state:
+            self.redo_stack.append(current_state)
+            if len(self.redo_stack) > self.max_history_size:
+                self.redo_stack.pop(0)
+        
+        # Восстанавливаем предыдущее состояние
+        previous_state = self.undo_stack.pop()
+        self.restore_state(previous_state)
+        
+        # Обновляем состояние кнопок
+        self.update_undo_redo_buttons()
+    
+    def redo(self):
+        """Повторяет отмененное действие"""
+        if not self.redo_stack:
+            return
+        
+        # Сохраняем текущее состояние в undo
+        current_state = self.save_current_state()
+        if current_state:
+            self.undo_stack.append(current_state)
+            if len(self.undo_stack) > self.max_history_size:
+                self.undo_stack.pop(0)
+        
+        # Восстанавливаем состояние из redo
+        next_state = self.redo_stack.pop()
+        self.restore_state(next_state)
+        
+        # Обновляем состояние кнопок
+        self.update_undo_redo_buttons()
+    
+    def save_current_state(self):
+        """Сохраняет текущее состояние без добавления в стек (для undo/redo)"""
+        state = {
+            "blocks": [],
+            "arrows": [],
+            "next_block_id": self.next_block_id,
+            "next_arrow_id": self.next_arrow_id
+        }
+        
+        # Сохраняем все блоки
+        for block_data in self.blocks:
+            block = block_data["model"]
+            state["blocks"].append({
+                "id": block.id,
+                "name": block.name,
+                "code": block.code,
+                "element_type": block.element_type,
+                "description": block.description,
+                "x": block.x,
+                "y": block.y,
+                "width": block.width,
+                "height": block.height,
+                "color": block.color,
+                "border_width": block.border_width
+            })
+        
+        # Сохраняем все стрелки
+        for arrow_data in self.arrows:
+            arrow = arrow_data["arrow"]
+            state["arrows"].append({
+                "id": arrow.id,
+                "from_block_id": arrow.from_block_id,
+                "to_block_id": arrow.to_block_id,
+                "from_side": arrow.from_side,
+                "to_side": arrow.to_side,
+                "from_attachment_point": arrow.from_attachment_point,
+                "to_attachment_point": arrow.to_attachment_point,
+                "color": arrow.color,
+                "width": arrow.width,
+                "style": arrow.style,
+                "x1": arrow.x1,
+                "y1": arrow.y1,
+                "x2": arrow.x2,
+                "y2": arrow.y2,
+                "bend_x": arrow.bend_x,
+                "bend_y": arrow.bend_y
+            })
+        
+        return state
+    
+    def update_undo_redo_buttons(self):
+        """Обновляет состояние кнопок undo/redo (активны/неактивны)"""
+        if hasattr(self, 'undo_btn'):
+            if self.undo_stack:
+                self.undo_btn.configure(state="normal")
+            else:
+                self.undo_btn.configure(state="disabled")
+        
+        if hasattr(self, 'redo_btn'):
+            if self.redo_stack:
+                self.redo_btn.configure(state="normal")
+            else:
+                self.redo_btn.configure(state="disabled")
     
     def run(self):
         """Запуск приложения"""
