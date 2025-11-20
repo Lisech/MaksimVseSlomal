@@ -48,6 +48,41 @@ class Block:
         self.height = data.get("height", self.height)
         self.color = data.get("color", self.color)
         self.border_width = data.get("border_width", self.border_width)
+    
+    def get_attachment_points(self, side):
+        """
+        Возвращает список координат точек прикрепления на указанной стороне
+        
+        Args:
+            side: Сторона ("left", "right", "top", "bottom")
+            
+        Returns:
+            list: Список из 3 кортежей (x, y) - координаты точек прикрепления
+        """
+        points = []
+        x = self.x
+        y = self.y
+        width = self.width
+        height = self.height
+        
+        if side == "left" or side == "right":
+            # Вертикальная сторона - 3 точки по вертикали
+            for i in range(3):
+                offset = (i - 1) * (height / 3)  # -height/3, 0, height/3
+                if side == "left":
+                    points.append((x - width / 2, y + offset))
+                else:  # right
+                    points.append((x + width / 2, y + offset))
+        else:  # top or bottom
+            # Горизонтальная сторона - 3 точки по горизонтали
+            for i in range(3):
+                offset = (i - 1) * (width / 3)  # -width/3, 0, width/3
+                if side == "top":
+                    points.append((x + offset, y - height / 2))
+                else:  # bottom
+                    points.append((x + offset, y + height / 2))
+        
+        return points
 
 
 class Arrow:
@@ -88,6 +123,10 @@ class Arrow:
         self.from_side = from_side  # "left", "right", "top", "bottom"
         self.to_side = to_side
         
+        # Точки прикрепления (0, 1, 2 - индекс точки на стороне)
+        self.from_attachment_point = None  # индекс точки прикрепления на начальной стороне
+        self.to_attachment_point = None    # индекс точки прикрепления на конечной стороне
+        
         # Визуальные свойства
         self.color = color
         self.width = width
@@ -104,6 +143,10 @@ class Arrow:
         self.display_y1 = None
         self.display_x2 = None
         self.display_y2 = None
+        
+        # Точка изгиба стрелки (None если стрелка прямая)
+        self.bend_x = None
+        self.bend_y = None
     
     def calculate_connection_points(self, from_block, to_block):
         """
@@ -116,7 +159,7 @@ class Arrow:
         # Вычисляем начальную точку
         if from_block:
             self.display_x1, self.display_y1 = self._get_side_point(
-                from_block, self.from_side
+                from_block, self.from_side, self.from_attachment_point
             )
         else:
             # Используем свободные координаты
@@ -126,20 +169,21 @@ class Arrow:
         # Вычисляем конечную точку
         if to_block:
             self.display_x2, self.display_y2 = self._get_side_point(
-                to_block, self.to_side
+                to_block, self.to_side, self.to_attachment_point
             )
         else:
             # Используем свободные координаты
             self.display_x2 = self.x2
             self.display_y2 = self.y2
     
-    def _get_side_point(self, block, side):
+    def _get_side_point(self, block, side, attachment_point=None):
         """
         Получает точку на стороне блока
         
         Args:
             block: Объект Block
             side: Сторона ("left", "right", "top", "bottom")
+            attachment_point: Индекс точки прикрепления (0, 1, 2) или None для центра
             
         Returns:
             tuple: (x, y) координаты точки
@@ -149,6 +193,11 @@ class Arrow:
         width = block.width
         height = block.height
         
+        # Если указана точка прикрепления, используем её
+        if attachment_point is not None:
+            return self._get_attachment_point(block, side, attachment_point)
+        
+        # Иначе возвращаем центр стороны (старое поведение)
         if side == "left":
             return (x - width / 2, y)
         elif side == "right":
@@ -160,6 +209,39 @@ class Arrow:
         else:
             # По умолчанию возвращаем центр блока
             return (x, y)
+    
+    def _get_attachment_point(self, block, side, point_index):
+        """
+        Получает координаты точки прикрепления на стороне блока
+        
+        Args:
+            block: Объект Block
+            side: Сторона ("left", "right", "top", "bottom")
+            point_index: Индекс точки (0, 1, 2) - верхняя/левая, средняя, нижняя/правая
+            
+        Returns:
+            tuple: (x, y) координаты точки
+        """
+        x = block.x
+        y = block.y
+        width = block.width
+        height = block.height
+        
+        # Вычисляем позицию точки на стороне (0 = начало, 1 = середина, 2 = конец)
+        if side == "left" or side == "right":
+            # Вертикальная сторона
+            offset = (point_index - 1) * (height / 3)  # -height/3, 0, height/3
+            if side == "left":
+                return (x - width / 2, y + offset)
+            else:  # right
+                return (x + width / 2, y + offset)
+        else:  # top or bottom
+            # Горизонтальная сторона
+            offset = (point_index - 1) * (width / 3)  # -width/3, 0, width/3
+            if side == "top":
+                return (x + offset, y - height / 2)
+            else:  # bottom
+                return (x + offset, y + height / 2)
     
     def is_connected_to_block(self, block_id):
         """Проверяет, соединена ли стрелка с указанным блоком"""
@@ -188,6 +270,7 @@ class Arrow:
                 self.y1 = self.display_y1
             self.from_block_id = None
             self.from_side = None
+            self.from_attachment_point = None
         
         if self.to_block_id == block_id:
             # Сохраняем текущие координаты перед отключением
@@ -196,8 +279,9 @@ class Arrow:
                 self.y2 = self.display_y2
             self.to_block_id = None
             self.to_side = None
+            self.to_attachment_point = None
     
-    def connect_to_block(self, block_id, side, is_start=True):
+    def connect_to_block(self, block_id, side, is_start=True, attachment_point=None):
         """
         Подключает стрелку к блоку
         
@@ -205,15 +289,18 @@ class Arrow:
             block_id: ID блока
             side: Сторона блока ("left", "right", "top", "bottom")
             is_start: True для начальной точки, False для конечной
+            attachment_point: Индекс точки прикрепления (0, 1, 2) или None
         """
         if is_start:
             self.from_block_id = block_id
             self.from_side = side
+            self.from_attachment_point = attachment_point
             self.x1 = None
             self.y1 = None
         else:
             self.to_block_id = block_id
             self.to_side = side
+            self.to_attachment_point = attachment_point
             self.x2 = None
             self.y2 = None
     
@@ -225,13 +312,17 @@ class Arrow:
             "to_block_id": self.to_block_id,
             "from_side": self.from_side,
             "to_side": self.to_side,
+            "from_attachment_point": self.from_attachment_point,
+            "to_attachment_point": self.to_attachment_point,
             "color": self.color,
             "width": self.width,
             "style": self.style,
             "x1": self.x1,
             "y1": self.y1,
             "x2": self.x2,
-            "y2": self.y2
+            "y2": self.y2,
+            "bend_x": self.bend_x,
+            "bend_y": self.bend_y
         }
     
     def update_from_dict(self, data):
@@ -240,6 +331,8 @@ class Arrow:
         self.to_block_id = data.get("to_block_id", self.to_block_id)
         self.from_side = data.get("from_side", self.from_side)
         self.to_side = data.get("to_side", self.to_side)
+        self.from_attachment_point = data.get("from_attachment_point", self.from_attachment_point)
+        self.to_attachment_point = data.get("to_attachment_point", self.to_attachment_point)
         self.color = data.get("color", self.color)
         self.width = data.get("width", self.width)
         self.style = data.get("style", self.style)
@@ -247,3 +340,5 @@ class Arrow:
         self.y1 = data.get("y1", self.y1)
         self.x2 = data.get("x2", self.x2)
         self.y2 = data.get("y2", self.y2)
+        self.bend_x = data.get("bend_x", self.bend_x)
+        self.bend_y = data.get("bend_y", self.bend_y)

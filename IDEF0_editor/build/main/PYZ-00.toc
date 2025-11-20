@@ -1,5 +1,4 @@
-('C:\\Users\\zsele\\OneDrive\\Рабочий '
- 'стол\\MaksimVseSlomal-main\\IDEF0_editor\\build\\main\\PYZ-00.pyz',
+('C:\\Users\\zsele\\OneDrive\\Документы\\GitHub\\MaksimVseSlomal\\IDEF0_editor\\build\\main\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
@@ -253,8 +252,7 @@
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\_threading_local.py',
    'PYMODULE'),
   ('app',
-   'C:\\Users\\zsele\\OneDrive\\Рабочий '
-   'стол\\MaksimVseSlomal-main\\IDEF0_editor\\app.py',
+   'C:\\Users\\zsele\\OneDrive\\Документы\\GitHub\\MaksimVseSlomal\\IDEF0_editor\\app.py',
    'PYMODULE'),
   ('argparse',
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\argparse.py',
@@ -476,8 +474,7 @@
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\mimetypes.py',
    'PYMODULE'),
   ('models',
-   'C:\\Users\\zsele\\OneDrive\\Рабочий '
-   'стол\\MaksimVseSlomal-main\\IDEF0_editor\\models.py',
+   'C:\\Users\\zsele\\OneDrive\\Документы\\GitHub\\MaksimVseSlomal\\IDEF0_editor\\models.py',
    'PYMODULE'),
   ('netrc',
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\netrc.py',
@@ -501,8 +498,7 @@
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\pprint.py',
    'PYMODULE'),
   ('properties',
-   'C:\\Users\\zsele\\OneDrive\\Рабочий '
-   'стол\\MaksimVseSlomal-main\\IDEF0_editor\\properties.py',
+   'C:\\Users\\zsele\\OneDrive\\Документы\\GitHub\\MaksimVseSlomal\\IDEF0_editor\\properties.py',
    'PYMODULE'),
   ('py_compile',
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\py_compile.py',
@@ -541,8 +537,7 @@
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\stringprep.py',
    'PYMODULE'),
   ('styles',
-   'C:\\Users\\zsele\\OneDrive\\Рабочий '
-   'стол\\MaksimVseSlomal-main\\IDEF0_editor\\styles.py',
+   'C:\\Users\\zsele\\OneDrive\\Документы\\GitHub\\MaksimVseSlomal\\IDEF0_editor\\styles.py',
    'PYMODULE'),
   ('subprocess',
    'C:\\Users\\zsele\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\subprocess.py',
