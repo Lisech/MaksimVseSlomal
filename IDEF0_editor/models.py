@@ -99,7 +99,7 @@ class Arrow:
                  from_block_id=None, to_block_id=None,
                  from_side="right", to_side="left",
                  color="#000000", width=2, style="solid",
-                 x1=None, y1=None, x2=None, y2=None):
+                 x1=None, y1=None, x2=None, y2=None, text=""):
         """
         Инициализация стрелки
         
@@ -114,6 +114,7 @@ class Arrow:
             style: Стиль линии ("solid", "dashed", "dotted")
             x1, y1: Координаты начальной точки (если from_block_id == None)
             x2, y2: Координаты конечной точки (если to_block_id == None)
+            text: Текст на стрелке
         """
         self.id = arrow_id
         self.from_block_id = from_block_id  # ID начального блока
@@ -131,6 +132,7 @@ class Arrow:
         self.color = color
         self.width = width
         self.style = style
+        self.text = text  # Текст на стрелке
         
         # Свободные координаты (если стрелка не привязана к блоку)
         self.x1 = x1
@@ -322,7 +324,8 @@ class Arrow:
             "x2": self.x2,
             "y2": self.y2,
             "bend_x": self.bend_x,
-            "bend_y": self.bend_y
+            "bend_y": self.bend_y,
+            "text": self.text
         }
     
     def update_from_dict(self, data):
@@ -342,3 +345,4 @@ class Arrow:
         self.y2 = data.get("y2", self.y2)
         self.bend_x = data.get("bend_x", self.bend_x)
         self.bend_y = data.get("bend_y", self.bend_y)
+        self.text = data.get("text", self.text if hasattr(self, 'text') else "")

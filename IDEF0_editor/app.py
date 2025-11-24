@@ -28,6 +28,9 @@ class IDEF0App:
         self.undo_stack = []  # стек для отмены действий
         self.redo_stack = []  # стек для повтора действий
         self.max_history_size = 50  # максимальный размер истории
+        # Буфер обмена для копирования/вставки
+        self.clipboard = None  # хранит скопированный элемент (блок или стрелка)
+        self.clipboard_type = None  # "block" или "arrow"
         self.setup_window()
         self.setup_ui()
         self.blocks = []
@@ -67,6 +70,79 @@ class IDEF0App:
         self.root.geometry("1200x700")
         self.root.configure(bg=Colors.BACKGROUND)
         self.root.minsize(1200, 800)
+        
+        # Создаем скрытое меню для акселераторов (для более надежной работы горячих клавиш)
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # Создаем меню Edit со скрытыми пунктами для акселераторов
+        edit_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        
+        # Обертки для методов с проверкой фокуса
+        def safe_copy():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.copy_selected()
+        
+        def safe_paste():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.paste_clipboard()
+        
+        def safe_cut():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.cut_selected()
+        
+        def safe_undo():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.undo()
+        
+        def safe_redo():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.redo()
+        
+        def safe_delete():
+            try:
+                widget = self.root.focus_get()
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return
+            except:
+                pass
+            self.delete_selected()
+        
+        # Добавляем пункты меню с акселераторами
+        edit_menu.add_command(label="Copy", command=safe_copy, accelerator="Ctrl+C")
+        edit_menu.add_command(label="Paste", command=safe_paste, accelerator="Ctrl+V")
+        edit_menu.add_command(label="Cut", command=safe_cut, accelerator="Ctrl+X")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Undo", command=safe_undo, accelerator="Ctrl+Z")
+        edit_menu.add_command(label="Redo", command=safe_redo, accelerator="Ctrl+Y")
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Delete", command=safe_delete, accelerator="Delete")
     
     def setup_ui(self):
         """Создание интерфейса - точная копия HTML макета"""
@@ -79,6 +155,243 @@ class IDEF0App:
         # Инициализируем состояние кнопок undo/redo
         self.update_undo_redo_buttons()
 
+    def format_block_text(self, text, max_width, max_chars=100):
+        """
+        Форматирует текст блока с ограничением по символам.
+        Автоперенос выполняется автоматически через параметр width в create_text.
+        
+        Args:
+            text: Исходный текст
+            max_width: Максимальная ширина блока в пикселях (для автопереноса)
+            max_chars: Максимальное количество символов (по умолчанию 100)
+        
+        Returns:
+            Текст с ограничением по символам (перенос выполняется автоматически)
+        """
+        if not text:
+            return ""
+        
+        # Ограничение по символам
+        if len(text) > max_chars:
+            text = text[:max_chars] + "..."
+        
+        # Возвращаем текст как есть - tkinter Canvas автоматически выполнит перенос
+        # при указании параметра width в create_text
+        return text
+
+    def setup_hotkeys(self):
+        """Привязывает горячие клавиши к действиям - работает всегда и во всех режимах"""
+        
+        def is_text_input_widget(widget):
+            """Проверяет, является ли виджет полем ввода текста"""
+            try:
+                if widget is None:
+                    return False
+                widget_class = widget.winfo_class()
+                # Проверяем класс виджета и тип
+                if isinstance(widget, (tk.Entry, tk.Text)):
+                    return True
+                # Также проверяем по классу виджета (для ttk виджетов)
+                if widget_class in ('Entry', 'Text', 'TEntry', 'TText'):
+                    return True
+                return False
+            except:
+                return False
+        
+        def safe_copy(e=None):
+            """Безопасное копирование - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.copy_selected()
+            except Exception as ex:
+                print(f"Ошибка при копировании: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        def safe_paste(e=None):
+            """Безопасная вставка - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.paste_clipboard()
+            except Exception as ex:
+                print(f"Ошибка при вставке: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        def safe_cut(e=None):
+            """Безопасное вырезание - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.cut_selected()
+            except Exception as ex:
+                print(f"Ошибка при вырезании: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        def safe_undo(e=None):
+            """Безопасная отмена - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.undo()
+            except Exception as ex:
+                print(f"Ошибка при отмене: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        def safe_redo(e=None):
+            """Безопасный повтор - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.redo()
+            except Exception as ex:
+                print(f"Ошибка при повторе: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        def safe_delete(e=None):
+            """Безопасное удаление - работает всегда, кроме полей ввода"""
+            try:
+                widget = self.root.focus_get()
+                if is_text_input_widget(widget):
+                    return None  # Разрешаем стандартное поведение в полях ввода
+            except:
+                pass
+            try:
+                self.delete_selected()
+            except Exception as ex:
+                print(f"Ошибка при удалении: {ex}")
+            return "break"  # Всегда блокируем дальнейшую обработку
+        
+        # Сохраняем ссылки на функции для использования в обработчиках
+        self._hotkey_copy = safe_copy
+        self._hotkey_paste = safe_paste
+        self._hotkey_cut = safe_cut
+        self._hotkey_undo = safe_undo
+        self._hotkey_redo = safe_redo
+        self._hotkey_delete = safe_delete
+        
+        # Универсальный обработчик для всех нажатий клавиш
+        # Используем bind_all для глобальной привязки, которая работает везде
+        def universal_key_handler(event):
+            """Универсальный обработчик клавиш - работает всегда"""
+            # Проверяем фокус, а не event.widget, так как bind_all может давать разные виджеты
+            try:
+                widget = self.root.focus_get()
+                # Пропускаем события из полей ввода
+                if is_text_input_widget(widget):
+                    return
+            except:
+                pass
+            
+            # Обрабатываем комбинации с Control
+            if event.state & 0x4:  # Control нажат
+                key = event.keysym.lower()
+                if key == 'c':
+                    safe_copy(event)
+                    return "break"
+                elif key == 'v':
+                    safe_paste(event)
+                    return "break"
+                elif key == 'x':
+                    safe_cut(event)
+                    return "break"
+                elif key == 'z':
+                    safe_undo(event)
+                    return "break"
+                elif key == 'y':
+                    safe_redo(event)
+                    return "break"
+            # Обрабатываем Delete и BackSpace
+            elif event.keysym in ('Delete', 'BackSpace'):
+                safe_delete(event)
+                return "break"
+        
+        # Привязываем горячие клавиши через bind_all для глобальной работы
+        # bind_all работает на всех виджетах и всегда, независимо от фокуса
+        # Используем add='+' для добавления обработчиков без замены существующих
+        
+        # Ctrl+C / Ctrl+Insert - Копирование
+        self.root.bind_all("<Control-c>", safe_copy, add='+')
+        self.root.bind_all("<Control-C>", safe_copy, add='+')
+        self.root.bind_all("<Control-Insert>", safe_copy, add='+')
+        
+        # Ctrl+V / Shift+Insert - Вставка
+        self.root.bind_all("<Control-v>", safe_paste, add='+')
+        self.root.bind_all("<Control-V>", safe_paste, add='+')
+        self.root.bind_all("<Shift-Insert>", safe_paste, add='+')
+        
+        # Ctrl+X - Вырезание
+        self.root.bind_all("<Control-x>", safe_cut, add='+')
+        self.root.bind_all("<Control-X>", safe_cut, add='+')
+        
+        # Ctrl+Z - Отмена
+        self.root.bind_all("<Control-z>", safe_undo, add='+')
+        self.root.bind_all("<Control-Z>", safe_undo, add='+')
+        
+        # Ctrl+Y / Ctrl+Shift+Z - Повтор
+        self.root.bind_all("<Control-y>", safe_redo, add='+')
+        self.root.bind_all("<Control-Y>", safe_redo, add='+')
+        self.root.bind_all("<Control-Shift-z>", safe_redo, add='+')
+        self.root.bind_all("<Control-Shift-Z>", safe_redo, add='+')
+        
+        # Delete / BackSpace - Удаление
+        self.root.bind_all("<Delete>", safe_delete, add='+')
+        self.root.bind_all("<BackSpace>", safe_delete, add='+')
+        
+        # Универсальный обработчик для всех клавиш (резервный)
+        self.root.bind_all("<KeyPress>", universal_key_handler, add='+')
+        
+        # Привязываем к canvas для дополнительной надежности
+        if hasattr(self, 'canvas'):
+            self.canvas.bind("<Control-c>", safe_copy, add='+')
+            self.canvas.bind("<Control-C>", safe_copy, add='+')
+            self.canvas.bind("<Control-v>", safe_paste, add='+')
+            self.canvas.bind("<Control-V>", safe_paste, add='+')
+            self.canvas.bind("<Control-x>", safe_cut, add='+')
+            self.canvas.bind("<Control-X>", safe_cut, add='+')
+            self.canvas.bind("<Control-z>", safe_undo, add='+')
+            self.canvas.bind("<Control-Z>", safe_undo, add='+')
+            self.canvas.bind("<Control-y>", safe_redo, add='+')
+            self.canvas.bind("<Control-Y>", safe_redo, add='+')
+            self.canvas.bind("<Delete>", safe_delete, add='+')
+            self.canvas.bind("<BackSpace>", safe_delete, add='+')
+            self.canvas.bind("<KeyPress>", universal_key_handler, add='+')
+            
+            # Устанавливаем фокус на canvas при входе мыши и клике
+            self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
+            self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set(), add="+")
+        
+        # Устанавливаем фокус на root для начальной работы
+        self.root.focus_set()
+        
+        # Устанавливаем возможность получения фокуса для всех виджетов
+        def set_focus():
+            if hasattr(self, 'canvas'):
+                self.canvas.focus_set()
+            else:
+                self.root.focus_set()
+        self.root.after(100, set_focus)
+    
     def setup_header(self):
         """Верхняя панель как в HTML макете"""
         header_frame = tk.Frame(
@@ -160,6 +473,65 @@ class IDEF0App:
         redo_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(redo_btn)
         self.redo_btn = redo_btn
+        
+        # Разделитель перед копированием/вставкой
+        separator2 = tk.Frame(toolbar_frame, bg=Colors.BORDER, width=1)
+        separator2.pack(side=tk.LEFT, padx=6, fill=tk.Y, pady=4)
+        
+        # Кнопки копирования, вырезания и вставки
+        cut_btn = tk.Button(
+            toolbar_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.cut_selected
+        )
+        self.set_widget_icon(cut_btn, "virez", (20, 20))
+        cut_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(cut_btn)
+        self.cut_btn = cut_btn
+        
+        copy_btn = tk.Button(
+            toolbar_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.copy_selected
+        )
+        self.set_widget_icon(copy_btn, "Copy", (20, 20))
+        copy_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(copy_btn)
+        self.copy_btn = copy_btn
+        
+        paste_btn = tk.Button(
+            toolbar_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.paste_clipboard
+        )
+        self.set_widget_icon(paste_btn, "vstavka", (20, 20))
+        paste_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(paste_btn)
+        self.paste_btn = paste_btn
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -220,6 +592,8 @@ class IDEF0App:
         for text, icon_name in right_buttons:
             btn = self.create_toolbar_button(right_frame, text)
             self.set_widget_icon(btn, icon_name, (20,20), compound='left')
+            if text == "Документация":
+                btn.configure(command=self.show_documentation)
             btn.pack(side=tk.LEFT, padx=6)
 
         # Отдельная кнопка смены темы
@@ -433,13 +807,15 @@ class IDEF0App:
         )
         
 
-        # Добавляем текст
+        # Добавляем текст с автопереносом
+        formatted_text = self.format_block_text(block_model.name, width)
         text = self.canvas.create_text(
             x, y,
-            text=block_model.name,
+            text=formatted_text,
             font=("Segoe UI", 10),
             fill=Colors.TEXT_PRIMARY,
             justify="center",
+            width=width - 10,  # Отступы по 5px с каждой стороны
             tags=("block_text", block_id)
         )
 
@@ -673,8 +1049,12 @@ class IDEF0App:
         y2 = model.y + model.height / 2
         self.canvas.coords(block_data["rect_id"], x1, y1, x2, y2)
         
-        # Обновляем текст
+        # Обновляем текст с автопереносом
+        formatted_text = self.format_block_text(model.name, model.width)
         self.canvas.coords(block_data["text_id"], model.x, model.y)
+        self.canvas.itemconfig(block_data["text_id"], 
+                             text=formatted_text,
+                             width=model.width - 10)
         
         # Обновляем маркеры изменения размера
         if block_data == self.selected_block:
@@ -890,7 +1270,11 @@ class IDEF0App:
             if block_data:
                 # Обновляем визуальное представление
                 if "name" in update_data:
-                    self.canvas.itemconfig(block_data["text_id"], text=update_data["name"])
+                    model = block_data["model"]
+                    formatted_text = self.format_block_text(update_data["name"], model.width)
+                    self.canvas.itemconfig(block_data["text_id"], 
+                                         text=formatted_text,
+                                         width=model.width - 10)
                 
                 if "color" in update_data:
                     self.canvas.itemconfig(block_data["rect_id"], fill=update_data["color"])
@@ -915,14 +1299,16 @@ class IDEF0App:
             # Находим визуальное представление стрелки
             arrow_data = next((a for a in self.arrows if a["arrow"] == element), None)
             if arrow_data:
+                # Обновляем свойства стрелки
+                element.update_from_dict(update_data)
+                
                 # Перерисовываем стрелку с новыми свойствами
                 self.draw_arrow(arrow_data)
                 
-                # Если стрелка выбрана, обновляем выделение
+                # Если стрелка выбрана, обновляем выделение и маркеры
                 if self.selected_arrow == arrow_data:
-                    arrow = arrow_data["arrow"]
-                    if arrow_data.get("line_id"):
-                        self.canvas.itemconfig(arrow_data["line_id"], width=arrow.width + 2)
+                    self.update_arrow_drag_handles(arrow_data)
+                    self.update_arrow_action_buttons_position(arrow_data)
             
             print(f"Обновлена стрелка {element.id}: {update_data}")
 
@@ -991,7 +1377,8 @@ class IDEF0App:
             canvas_frame,
             bg=Colors.SURFACE,
             highlightthickness=0,
-            scrollregion=(-2000, -2000, 4000, 4000)  # Большая область для панорамирования
+            scrollregion=(-2000, -2000, 4000, 4000),  # Большая область для панорамирования
+            takefocus=True  # Разрешаем canvas получать фокус для горячих клавиш
         )
         
         # Добавляем скроллбары
@@ -1031,7 +1418,11 @@ class IDEF0App:
         self.canvas.bind_all("<Control-Button-5>", lambda e: self.on_ctrl_scroll_steps(-1))
 
         # Обработчик клика по пустому месту для сброса выделения
-        self.canvas.bind("<Button-1>", self.on_canvas_click)
+        # Устанавливаем фокус на canvas при клике для работы горячих клавиш
+        def canvas_click_with_focus(e):
+            self.canvas.focus_set()
+            return self.on_canvas_click(e)
+        self.canvas.bind("<Button-1>", canvas_click_with_focus)
         self.canvas.bind("<ButtonRelease-1>", self.on_canvas_release)
         self.canvas.bind("<B1-Motion>", self.on_canvas_drag)
         
@@ -1042,6 +1433,9 @@ class IDEF0App:
         self.canvas.tag_bind("arrow_line", "<Button-1>", self.on_arrow_click)
         self.canvas.tag_bind("arrow_hitbox", "<Button-1>", self.on_arrow_click)
         self.canvas.tag_bind("arrow_arrowhead", "<Button-1>", self.on_arrow_click)
+        
+        # Привязываем горячие клавиши после создания canvas
+        self.setup_hotkeys()
 
     # --- Кнопки действий для блока (переместить / копировать / удалить) ---
 
@@ -1197,8 +1591,25 @@ class IDEF0App:
         if self.selected_block == block_data:
             self.selected_block = None
             self.properties_panel.update_properties(None)
+            self.hide_block_action_buttons()
         # Удаляем стрелки, соединенные с этим блоком
         block_id = block_data["id"]
+        arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
+        for arrow_data in arrows_to_remove:
+            self.delete_arrow(arrow_data)
+        
+        # Удаляем блок с холста
+        try:
+            self.canvas.delete(block_data["rect_id"])
+            self.canvas.delete(block_data["text_id"])
+        except tk.TclError:
+            pass
+        
+        # Удаляем маркеры изменения размера
+        self.delete_resize_handles(block_data)
+        
+        # Удаляем блок из списка
+        self.blocks.remove(block_data)
     
     def show_arrow_action_buttons(self, arrow_data):
         """Показывает кнопки действий для выбранной стрелки."""
@@ -1303,10 +1714,17 @@ class IDEF0App:
         arrow = arrow_data["arrow"]
         offset = 30
         if arrow.display_x1 is not None and arrow.display_y1 is not None and arrow.display_x2 is not None and arrow.display_y2 is not None:
-            self.create_arrow_from_point_to_point(
+            new_arrow_data = self.create_arrow_from_point_to_point(
                 arrow.display_x1 + offset, arrow.display_y1 + offset,
                 arrow.display_x2 + offset, arrow.display_y2 + offset
             )
+            # Копируем текст и другие свойства
+            if new_arrow_data:
+                new_arrow_data["arrow"].text = arrow.text
+                new_arrow_data["arrow"].color = arrow.color
+                new_arrow_data["arrow"].width = arrow.width
+                new_arrow_data["arrow"].style = arrow.style
+                self.draw_arrow(new_arrow_data)
     
     def delete_arrow_direct(self, arrow_data):
         """Удаление конкретной стрелки по кнопке."""
@@ -2687,6 +3105,125 @@ class IDEF0App:
         if arrowhead_id:
             self.canvas.tag_raise(arrowhead_id)
         
+        # Удаляем старый текст и обводку, если существуют
+        if arrow_data.get("text_id"):
+            try:
+                self.canvas.delete(arrow_data["text_id"])
+            except tk.TclError:
+                pass  # Элемент уже удален
+        if arrow_data.get("text_outline_ids"):
+            for outline_id in arrow_data["text_outline_ids"]:
+                try:
+                    self.canvas.delete(outline_id)
+                except tk.TclError:
+                    pass  # Элемент уже удален
+            arrow_data["text_outline_ids"] = []
+        
+        # Рисуем текст на стрелке, если он есть
+        if arrow.text and arrow.text.strip():
+            # Вычисляем вектор направления стрелки
+            if arrow.bend_x is not None and arrow.bend_y is not None:
+                # Для изогнутой стрелки - используем последний сегмент (от изгиба к концу)
+                dx = x2 - arrow.bend_x
+                dy = y2 - arrow.bend_y
+                # Позиция текста - середина последнего сегмента
+                base_x = (arrow.bend_x + x2) / 2
+                base_y = (arrow.bend_y + y2) / 2
+            else:
+                # Для прямой стрелки
+                dx = x2 - x1
+                dy = y2 - y1
+                # Позиция текста - середина линии
+                base_x = (x1 + x2) / 2
+                base_y = (y1 + y2) / 2
+            
+            # Вычисляем длину вектора направления
+            length = math.sqrt(dx * dx + dy * dy)
+            if length == 0:
+                length = 1  # Избегаем деления на ноль
+            
+            # Нормализуем вектор направления
+            dx_norm = dx / length
+            dy_norm = dy / length
+            
+            # Вычисляем нормальный вектор (перпендикулярный к стрелке)
+            # Поворачиваем вектор направления на 90 градусов против часовой стрелки
+            normal_x = -dy_norm
+            normal_y = dx_norm
+            
+            # Смещаем текст перпендикулярно к стрелке
+            # Расстояние смещения (в пикселях)
+            offset_distance = 20  # Смещение от стрелки
+            
+            # Вычисляем финальную позицию текста
+            text_x = base_x + normal_x * offset_distance
+            text_y = base_y + normal_y * offset_distance
+            
+            # Вычисляем угол наклона стрелки для поворота текста (параллельно стрелке)
+            angle_rad = math.atan2(dy, dx)
+            angle = angle_rad * 180 / math.pi
+            
+            # Исправляем угол, чтобы текст не был перевернутым
+            # Если угол больше 90 или меньше -90, поворачиваем на 180 градусов
+            if angle > 90 or angle < -90:
+                angle = angle + 180 if angle < 0 else angle - 180
+            
+            # Вычисляем противоположный цвет для обводки
+            def get_opposite_color(color):
+                """Возвращает противоположный цвет (инвертированный RGB)"""
+                try:
+                    # Убираем # если есть
+                    color = color.lstrip('#')
+                    # Конвертируем в RGB
+                    r = int(color[0:2], 16)
+                    g = int(color[2:4], 16)
+                    b = int(color[4:6], 16)
+                    # Инвертируем
+                    r = 255 - r
+                    g = 255 - g
+                    b = 255 - b
+                    # Возвращаем в формате #RRGGBB
+                    return f"#{r:02x}{g:02x}{b:02x}"
+                except:
+                    # Если не удалось обработать, возвращаем белый или черный
+                    return "#FFFFFF" if arrow_color != "#FFFFFF" else "#000000"
+            
+            outline_color = get_opposite_color(arrow_color)
+            
+            # Создаем обводку текста (рисуем текст несколько раз со смещением)
+            outline_width = 2  # Толщина обводки
+            outline_ids = []
+            for dx_offset in range(-outline_width, outline_width + 1):
+                for dy_offset in range(-outline_width, outline_width + 1):
+                    if dx_offset == 0 and dy_offset == 0:
+                        continue  # Пропускаем центральную позицию
+                    outline_id = self.canvas.create_text(
+                        text_x + dx_offset, text_y + dy_offset,
+                        text=arrow.text,
+                        font=("Segoe UI", 9, "bold"),
+                        fill=outline_color,
+                        angle=angle,
+                        tags=("arrow_text_outline", arrow.id)
+                    )
+                    outline_ids.append(outline_id)
+            
+            # Создаем основной текст на стрелке поверх обводки
+            text_id = self.canvas.create_text(
+                text_x, text_y,
+                text=arrow.text,
+                font=("Segoe UI", 9, "bold"),
+                fill=arrow_color,
+                angle=angle,
+                tags=("arrow_text", arrow.id)
+            )
+            arrow_data["text_id"] = text_id
+            arrow_data["text_outline_ids"] = outline_ids
+            
+            # Поднимаем текст наверх (сначала обводка, потом основной текст)
+            for outline_id in outline_ids:
+                self.canvas.tag_raise(outline_id)
+            self.canvas.tag_raise(text_id)
+        
         # Обновляем маркеры и кнопки, если стрелка выбрана
         if self.selected_arrow == arrow_data:
             self.update_arrow_drag_handles(arrow_data)
@@ -2973,6 +3510,14 @@ class IDEF0App:
             self.canvas.delete(arrow_data["hitbox_id"])
         if arrow_data.get("arrowhead_id"):
             self.canvas.delete(arrow_data["arrowhead_id"])
+        if arrow_data.get("text_id"):
+            self.canvas.delete(arrow_data["text_id"])
+        if arrow_data.get("text_outline_ids"):
+            for outline_id in arrow_data["text_outline_ids"]:
+                try:
+                    self.canvas.delete(outline_id)
+                except tk.TclError:
+                    pass
         if arrow_data in self.arrows:
             self.arrows.remove(arrow_data)
     
@@ -3021,7 +3566,8 @@ class IDEF0App:
                 "x2": arrow.x2,
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
-                "bend_y": arrow.bend_y
+                "bend_y": arrow.bend_y,
+                "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
         # Добавляем в стек undo
@@ -3098,12 +3644,14 @@ class IDEF0App:
                 tags=("block", block.id)
             )
             
+            formatted_text = self.format_block_text(block.name, block.width)
             text = self.canvas.create_text(
                 block.x, block.y,
-                text=block.name,
+                text=formatted_text,
                 font=("Segoe UI", 10),
                 fill=Colors.TEXT_PRIMARY,
                 justify="center",
+                width=block.width - 10,
                 tags=("block_text", block.id)
             )
             
@@ -3132,7 +3680,8 @@ class IDEF0App:
                 x1=arrow_dict["x1"],
                 y1=arrow_dict["y1"],
                 x2=arrow_dict["x2"],
-                y2=arrow_dict["y2"]
+                y2=arrow_dict["y2"],
+                text=arrow_dict.get("text", "")
             )
             arrow.from_attachment_point = arrow_dict.get("from_attachment_point")
             arrow.to_attachment_point = arrow_dict.get("to_attachment_point")
@@ -3232,7 +3781,8 @@ class IDEF0App:
                 "x2": arrow.x2,
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
-                "bend_y": arrow.bend_y
+                "bend_y": arrow.bend_y,
+                "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
         return state
@@ -3251,6 +3801,292 @@ class IDEF0App:
             else:
                 self.redo_btn.configure(state="disabled")
     
+    def copy_selected(self):
+        """Копирует выбранный элемент (блок или стрелку) в буфер обмена"""
+        if self.selected_block:
+            # Сохраняем данные блока
+            block = self.selected_block["model"]
+            self.clipboard = {
+                "id": block.id,
+                "name": block.name,
+                "code": block.code,
+                "element_type": block.element_type,
+                "description": block.description,
+                "x": block.x,
+                "y": block.y,
+                "width": block.width,
+                "height": block.height,
+                "color": block.color,
+                "border_width": block.border_width
+            }
+            self.clipboard_type = "block"
+        elif self.selected_arrow:
+            # Сохраняем данные стрелки
+            arrow = self.selected_arrow["arrow"]
+            self.clipboard = {
+                "id": arrow.id,
+                "from_block_id": arrow.from_block_id,
+                "to_block_id": arrow.to_block_id,
+                "from_side": arrow.from_side,
+                "to_side": arrow.to_side,
+                "from_attachment_point": arrow.from_attachment_point,
+                "to_attachment_point": arrow.to_attachment_point,
+                "color": arrow.color,
+                "width": arrow.width,
+                "style": arrow.style,
+                "x1": arrow.x1,
+                "y1": arrow.y1,
+                "x2": arrow.x2,
+                "y2": arrow.y2,
+                "bend_x": arrow.bend_x,
+                "bend_y": arrow.bend_y,
+                "text": arrow.text if hasattr(arrow, 'text') else "",
+                "display_x1": arrow.display_x1,
+                "display_y1": arrow.display_y1,
+                "display_x2": arrow.display_x2,
+                "display_y2": arrow.display_y2
+            }
+            self.clipboard_type = "arrow"
+    
+    def cut_selected(self):
+        """Вырезает выбранный элемент (копирует и удаляет)"""
+        if not self.selected_block and not self.selected_arrow:
+            return
+        
+        # Копируем в буфер обмена
+        self.copy_selected()
+        
+        # Удаляем элемент
+        if self.selected_block:
+            self.delete_block_direct(self.selected_block)
+        elif self.selected_arrow:
+            self.delete_arrow_direct(self.selected_arrow)
+        
+        # Сохраняем состояние для undo
+        self.save_state()
+    
+    def paste_clipboard(self):
+        """Вставляет элемент из буфера обмена"""
+        if not self.clipboard or not self.clipboard_type:
+            return
+        
+        if self.clipboard_type == "block":
+            # Создаем новый блок со смещением
+            offset = 30
+            block_data = self.clipboard
+            new_block = Block(
+                block_id=None,  # Будет создан новый ID
+                name=block_data["name"],
+                code=block_data["code"],
+                element_type=block_data["element_type"],
+                description=block_data["description"],
+                x=block_data["x"] + offset,
+                y=block_data["y"] + offset,
+                width=block_data["width"],
+                height=block_data["height"],
+                color=block_data["color"],
+                border_width=block_data["border_width"]
+            )
+            
+            # Создаем визуальное представление
+            block_id = f"block_{self.next_block_id}"
+            self.next_block_id += 1
+            new_block.id = block_id
+            
+            x1 = new_block.x - new_block.width / 2
+            y1 = new_block.y - new_block.height / 2
+            x2 = new_block.x + new_block.width / 2
+            y2 = new_block.y + new_block.height / 2
+            
+            rect = self.canvas.create_rectangle(
+                x1, y1, x2, y2,
+                fill=new_block.color,
+                outline=Colors.BLOCK_BORDER,
+                width=new_block.border_width,
+                tags=("block", block_id)
+            )
+            
+            formatted_text = self.format_block_text(new_block.name, new_block.width)
+            text = self.canvas.create_text(
+                new_block.x, new_block.y,
+                text=formatted_text,
+                font=("Segoe UI", 10),
+                fill=Colors.TEXT_PRIMARY,
+                justify="center",
+                width=new_block.width - 10,
+                tags=("block_text", block_id)
+            )
+            
+            block_data_obj = {
+                "id": block_id,
+                "model": new_block,
+                "rect_id": rect,
+                "text_id": text,
+                "resize_handles": {}
+            }
+            
+            self.blocks.append(block_data_obj)
+            self.make_block_interactive(block_data_obj)
+            self.select_block(block_data_obj)
+            
+        elif self.clipboard_type == "arrow":
+            # Создаем новую стрелку со смещением
+            offset = 30
+            arrow_data = self.clipboard
+            
+            new_arrow_data = None
+            # Если есть координаты отображения, используем их
+            if arrow_data.get("display_x1") and arrow_data.get("display_y1") and \
+               arrow_data.get("display_x2") and arrow_data.get("display_y2"):
+                new_arrow_data = self.create_arrow_from_point_to_point(
+                    arrow_data["display_x1"] + offset,
+                    arrow_data["display_y1"] + offset,
+                    arrow_data["display_x2"] + offset,
+                    arrow_data["display_y2"] + offset
+                )
+            elif arrow_data.get("x1") and arrow_data.get("y1") and \
+                 arrow_data.get("x2") and arrow_data.get("y2"):
+                new_arrow_data = self.create_arrow_from_point_to_point(
+                    arrow_data["x1"] + offset,
+                    arrow_data["y1"] + offset,
+                    arrow_data["x2"] + offset,
+                    arrow_data["y2"] + offset
+                )
+            
+            # Восстанавливаем свойства стрелки
+            if new_arrow_data:
+                new_arrow = new_arrow_data["arrow"]
+                new_arrow.text = arrow_data.get("text", "")
+                new_arrow.color = arrow_data.get("color", Colors.ARROW_COLOR)
+                new_arrow.width = arrow_data.get("width", 2)
+                new_arrow.style = arrow_data.get("style", "solid")
+                new_arrow.bend_x = arrow_data.get("bend_x")
+                new_arrow.bend_y = arrow_data.get("bend_y")
+                self.draw_arrow(new_arrow_data)
+                self.select_arrow(new_arrow_data)
+        
+        # Сохраняем состояние для undo
+        self.save_state()
+    
+    def show_documentation(self):
+        """Показывает окно с документацией и горячими клавишами"""
+        doc_window = tk.Toplevel(self.root)
+        doc_window.title("Документация - Горячие клавиши")
+        doc_window.geometry("600x700")
+        doc_window.configure(bg=Colors.BACKGROUND)
+        
+        # Создаем прокручиваемую область
+        canvas = tk.Canvas(doc_window, bg=Colors.BACKGROUND, highlightthickness=0)
+        scrollbar = tk.Scrollbar(doc_window, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=Colors.BACKGROUND)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Заголовок
+        title_label = tk.Label(
+            scrollable_frame,
+            text="Горячие клавиши IDEF0 Editor",
+            font=("Segoe UI", 16, "bold"),
+            bg=Colors.BACKGROUND,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(pady=20)
+        
+        # Раздел: Редактирование
+        section1 = tk.Label(
+            scrollable_frame,
+            text="Редактирование",
+            font=("Segoe UI", 12, "bold"),
+            bg=Colors.BACKGROUND,
+            fg=Colors.TEXT_PRIMARY,
+            anchor="w"
+        )
+        section1.pack(fill=tk.X, padx=20, pady=(10, 5))
+        
+        shortcuts_edit = [
+            ("Ctrl + C", "Копировать выбранный элемент"),
+            ("Ctrl + V", "Вставить элемент из буфера обмена"),
+            ("Ctrl + X", "Вырезать выбранный элемент"),
+            ("Ctrl + Z", "Отменить последнее действие"),
+            ("Ctrl + Y", "Повторить отмененное действие"),
+            ("Delete", "Удалить выбранный элемент"),
+        ]
+        
+        for key, desc in shortcuts_edit:
+            frame = tk.Frame(scrollable_frame, bg=Colors.BACKGROUND)
+            frame.pack(fill=tk.X, padx=20, pady=2)
+            tk.Label(
+                frame,
+                text=key,
+                font=("Segoe UI", 10, "bold"),
+                bg=Colors.BACKGROUND,
+                fg=Colors.PRIMARY,
+                width=15,
+                anchor="w"
+            ).pack(side=tk.LEFT)
+            tk.Label(
+                frame,
+                text=desc,
+                font=("Segoe UI", 10),
+                bg=Colors.BACKGROUND,
+                fg=Colors.TEXT_PRIMARY,
+                anchor="w"
+            ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        # Раздел: Навигация
+        section2 = tk.Label(
+            scrollable_frame,
+            text="Навигация",
+            font=("Segoe UI", 12, "bold"),
+            bg=Colors.BACKGROUND,
+            fg=Colors.TEXT_PRIMARY,
+            anchor="w"
+        )
+        section2.pack(fill=tk.X, padx=20, pady=(20, 5))
+        
+        shortcuts_nav = [
+            ("Space", "Панорамирование холста (удерживать)"),
+            ("Ctrl + Колесо мыши", "Масштабирование"),
+        ]
+        
+        for key, desc in shortcuts_nav:
+            frame = tk.Frame(scrollable_frame, bg=Colors.BACKGROUND)
+            frame.pack(fill=tk.X, padx=20, pady=2)
+            tk.Label(
+                frame,
+                text=key,
+                font=("Segoe UI", 10, "bold"),
+                bg=Colors.BACKGROUND,
+                fg=Colors.PRIMARY,
+                width=15,
+                anchor="w"
+            ).pack(side=tk.LEFT)
+            tk.Label(
+                frame,
+                text=desc,
+                font=("Segoe UI", 10),
+                bg=Colors.BACKGROUND,
+                fg=Colors.TEXT_PRIMARY,
+                anchor="w"
+            ).pack(side=tk.LEFT, padx=(10, 0))
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Привязываем прокрутку колесом мыши
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
     def run(self):
         """Запуск приложения"""
+        # Устанавливаем фокус на canvas при запуске
+        if hasattr(self, 'canvas'):
+            self.root.after(100, lambda: self.canvas.focus_set())
         self.root.mainloop()

@@ -27,28 +27,50 @@ class PropertiesPanel(tk.Frame):
         self.setup_ui()
 
     def setup_ui(self):
-        # Основной контейнер
-        content_frame = tk.Frame(self, bg=Colors.BACKGROUND)
-        content_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
-
+        # Основной контейнер с прокруткой
+        canvas = tk.Canvas(self, bg=Colors.BACKGROUND, highlightthickness=0)
+        scrollbar = tk.Scrollbar(self, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas, bg=Colors.BACKGROUND)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        
+        # Основной контейнер для карточек
+        content_frame = scrollable_frame
+        
         # Карточка свойств элемента (для блоков)
         self.element_properties_card = self.create_card(content_frame, "Свойства элемента")
         self.create_element_properties(self.element_properties_card)
+        self.element_properties_card.card_outer.pack(fill=tk.X, pady=(0, 16))
 
         # Карточка позиции и размера (для блоков)
         self.position_card = self.create_card(content_frame, "Позиция и размер")
         self.create_position_card(self.position_card)
+        self.position_card.card_outer.pack(fill=tk.X, pady=(0, 16))
 
         # Карточка стиля (для блоков)
         self.style_card = self.create_card(content_frame, "Стиль")
         self.create_style_card(self.style_card)
+        self.style_card.card_outer.pack(fill=tk.X, pady=(0, 16))
         
         # Карточка свойств стрелки (для стрелок)
         self.arrow_properties_card = self.create_card(content_frame, "Свойства стрелки")
         self.create_arrow_properties(self.arrow_properties_card)
-        
         # Скрываем карточку стрелок по умолчанию
-        self.arrow_properties_card.pack_forget()
+        self.arrow_properties_card.card_outer.pack_forget()
+        
+        # Привязка прокрутки колесиком мыши
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
 
     def create_element_properties(self, parent):
         """Карточка 'Свойства элемента'"""
@@ -292,6 +314,38 @@ class PropertiesPanel(tk.Frame):
         )
         self.arrow_width_label.pack(side=tk.LEFT, padx=4)
 
+        # Текст стрелки
+        text_frame = tk.Frame(parent, bg=Colors.SURFACE)
+        text_frame.pack(fill=tk.X, padx=14, pady=(0, 12))
+
+        tk.Label(
+            text_frame,
+            text="Текст на стрелке",
+            font=Fonts.SMALL,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_SECONDARY
+        ).pack(anchor="w", pady=(0, 5))
+
+        # Поле ввода текста
+        arrow_text_entry = tk.Entry(
+            text_frame,
+            font=Fonts.SMALL,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=1,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.PRIMARY,
+            insertbackground=Colors.TEXT_PRIMARY
+        )
+        arrow_text_entry.pack(fill=tk.X, pady=(0, 0))
+        self.fields["arrow_text"] = arrow_text_entry
+
+        # Привязываем обработчик изменения
+        arrow_text_entry.bind("<KeyRelease>", lambda e: self.on_arrow_text_changed())
+        arrow_text_entry.bind("<FocusOut>", lambda e: self.on_arrow_text_changed())
+
         # Кнопка увеличения
         self.arrow_width_plus_btn = tk.Button(
             width_controls_frame,
@@ -335,7 +389,8 @@ class PropertiesPanel(tk.Frame):
             highlightthickness=1,
             highlightbackground=Colors.BORDER
         )
-        card_outer.pack(fill=tk.X, pady=(0, 16))
+        # Не упаковываем сразу - это будет сделано в update_properties
+        # card_outer.pack(fill=tk.X, pady=(0, 16))
 
         card = tk.Frame(
             card_outer,
@@ -354,6 +409,8 @@ class PropertiesPanel(tk.Frame):
         )
         title_label.pack(fill=tk.X, padx=14, pady=12)
 
+        # Сохраняем ссылку на card_outer для управления видимостью
+        card.card_outer = card_outer
         return card
 
     def create_field(self, parent, label_text, field_name, placeholder):
@@ -530,6 +587,14 @@ class PropertiesPanel(tk.Frame):
                 else:
                     swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
     
+    def on_arrow_text_changed(self):
+        """Обработчик изменения текста стрелки"""
+        if self.current_block and isinstance(self.current_block, Arrow) and self.on_properties_change:
+            if "arrow_text" in self.fields:
+                text = self.fields["arrow_text"].get()
+                update_data = {"text": text}
+                self.on_properties_change(self.current_block, update_data)
+    
     def on_arrow_color_selected(self, color):
         """Обработчик выбора цвета стрелки"""
         if self.current_block and isinstance(self.current_block, Arrow) and self.on_properties_change:
@@ -568,10 +633,10 @@ class PropertiesPanel(tk.Frame):
         # Скрываем/показываем карточки в зависимости от типа элемента
         if element is None:
             # Скрываем все карточки
-            self.element_properties_card.pack_forget()
-            self.position_card.pack_forget()
-            self.style_card.pack_forget()
-            self.arrow_properties_card.pack_forget()
+            self.element_properties_card.card_outer.pack_forget()
+            self.position_card.card_outer.pack_forget()
+            self.style_card.card_outer.pack_forget()
+            self.arrow_properties_card.card_outer.pack_forget()
             
             # Сбрасываем поля
             for field_name, entry in self.fields.items():
@@ -606,10 +671,10 @@ class PropertiesPanel(tk.Frame):
         # Определяем тип элемента
         if isinstance(element, Block):
             # Показываем карточки для блока
-            self.element_properties_card.pack(fill=tk.X, pady=(0, 16))
-            self.position_card.pack(fill=tk.X, pady=(0, 16))
-            self.style_card.pack(fill=tk.X, pady=(0, 16))
-            self.arrow_properties_card.pack_forget()
+            self.element_properties_card.card_outer.pack(fill=tk.X, pady=(0, 16))
+            self.position_card.card_outer.pack(fill=tk.X, pady=(0, 16))
+            self.style_card.card_outer.pack(fill=tk.X, pady=(0, 16))
+            self.arrow_properties_card.card_outer.pack_forget()
             
             # Обновляем поля значениями из блока
             block_data = element.to_dict()
@@ -632,18 +697,31 @@ class PropertiesPanel(tk.Frame):
                     swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
         
         elif isinstance(element, Arrow):
-            # Показываем карточки для стрелки
-            self.element_properties_card.pack_forget()
-            self.position_card.pack_forget()
-            self.style_card.pack_forget()
-            self.arrow_properties_card.pack(fill=tk.X, pady=(0, 16))
+            # Сохраняем ссылку на текущую стрелку
+            self.current_block = element
+            
+            # Скрываем карточки для блоков
+            self.element_properties_card.card_outer.pack_forget()
+            self.position_card.card_outer.pack_forget()
+            self.style_card.card_outer.pack_forget()
+            
+            # Показываем карточку для стрелки
+            # Убеждаемся, что карточка видна
+            self.arrow_properties_card.card_outer.pack(fill=tk.X, pady=(0, 16))
             
             # Обновляем свойства стрелки
             arrow_data = element.to_dict()
             
             # Обновляем толщину стрелки
             self.current_arrow_width = arrow_data.get("width", 2)
-            self.arrow_width_label.config(text=f"{self.current_arrow_width}px")
+            if hasattr(self, 'arrow_width_label'):
+                self.arrow_width_label.config(text=f"{self.current_arrow_width}px")
+            
+            # Обновляем текст стрелки
+            if "arrow_text" in self.fields:
+                arrow_text = arrow_data.get("text", "")
+                self.fields["arrow_text"].delete(0, tk.END)
+                self.fields["arrow_text"].insert(0, arrow_text)
             
             # Обновляем стиль стрелки
             if "arrow_style" in self.fields:
@@ -652,8 +730,11 @@ class PropertiesPanel(tk.Frame):
             
             # Подсвечиваем выбранный цвет стрелки
             current_color = arrow_data.get("color", "#000000")
-            for color, swatch in self.arrow_color_swatches.items():
-                if color == current_color:
-                    swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
-                else:
-                    swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
+            if hasattr(self, 'arrow_color_swatches'):
+                for color, swatch in self.arrow_color_swatches.items():
+                    if color == current_color:
+                        swatch.configure(highlightbackground=Colors.PRIMARY, highlightthickness=2)
+                    else:
+                        swatch.configure(highlightbackground=Colors.BORDER, highlightthickness=1)
+            
+            print(f"Панель свойств стрелки обновлена: цвет={current_color}, ширина={self.current_arrow_width}, текст={arrow_data.get('text', '')}")
