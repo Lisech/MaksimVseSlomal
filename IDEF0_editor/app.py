@@ -926,11 +926,27 @@ class IDEF0App:
         """Начало изменения размера"""
         if self.current_mode == "select":
             self.resizing_block = block_data
-            # Создаем превью для растягивания
             model = block_data["model"]
+            
+            # Вычисляем координаты углов блока
+            left = model.x - model.width / 2
+            right = model.x + model.width / 2
+            top = model.y - model.height / 2
+            bottom = model.y + model.height / 2
+            
+            # Определяем противоположный угол (фиксированный)
+            if handle_type == "nw":  # северо-запад - фиксируем юго-восток
+                fixed_x, fixed_y = right, bottom
+            elif handle_type == "ne":  # северо-восток - фиксируем юго-запад
+                fixed_x, fixed_y = left, bottom
+            elif handle_type == "sw":  # юго-запад - фиксируем северо-восток
+                fixed_x, fixed_y = right, top
+            else:  # se - юго-восток - фиксируем северо-запад
+                fixed_x, fixed_y = left, top
+            
+            # Создаем превью для растягивания
             self.resize_preview = self.canvas.create_rectangle(
-                model.x - model.width/2, model.y - model.height/2,
-                model.x + model.width/2, model.y + model.height/2,
+                left, top, right, bottom,
                 fill=model.color,
                 outline=Colors.PRIMARY,
                 width=2,
@@ -940,12 +956,12 @@ class IDEF0App:
             
             block_data["resize_data"] = {
                 "handle_type": handle_type,
-                "start_x": event.x,
-                "start_y": event.y,
-                "start_width": model.width,
-                "start_height": model.height,
-                "start_center_x": model.x,
-                "start_center_y": model.y
+                "fixed_x": fixed_x,  # Фиксированный угол
+                "fixed_y": fixed_y,
+                "start_left": left,
+                "start_right": right,
+                "start_top": top,
+                "start_bottom": bottom
             }
             return "break"
 
@@ -954,33 +970,43 @@ class IDEF0App:
         if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
             resize_data = block_data["resize_data"]
             
-            # Вычисляем смещение
-            dx = event.x - resize_data["start_x"]
-            dy = event.y - resize_data["start_y"]
+            # Текущая позиция мыши - это новый угол блока
+            new_x = event.x
+            new_y = event.y
             
-            # Вычисляем новые размеры и позицию
-            new_width = resize_data["start_width"]
-            new_height = resize_data["start_height"]
-            new_center_x = resize_data["start_center_x"]
-            new_center_y = resize_data["start_center_y"]
+            # Фиксированный угол (противоположный)
+            fixed_x = resize_data["fixed_x"]
+            fixed_y = resize_data["fixed_y"]
             
-            if "e" in handle_type:  # правые маркеры
-                new_width = max(50, resize_data["start_width"] + dx)
-            if "w" in handle_type:  # левые маркеры
-                new_width = max(50, resize_data["start_width"] - dx)
-                new_center_x = resize_data["start_center_x"] + dx / 2
-            if "s" in handle_type:  # нижние маркеры
-                new_height = max(30, resize_data["start_height"] + dy)
-            if "n" in handle_type:  # верхние маркеры
-                new_height = max(30, resize_data["start_height"] - dy)
-                new_center_y = resize_data["start_center_y"] + dy / 2
+            # Вычисляем новые координаты углов
+            # Минимальные размеры
+            min_width = 50
+            min_height = 30
+            
+            # Определяем новые координаты в зависимости от угла
+            if handle_type == "nw":  # северо-запад
+                new_left = min(new_x, fixed_x - min_width)
+                new_top = min(new_y, fixed_y - min_height)
+                new_right = fixed_x
+                new_bottom = fixed_y
+            elif handle_type == "ne":  # северо-восток
+                new_left = fixed_x
+                new_top = min(new_y, fixed_y - min_height)
+                new_right = max(new_x, fixed_x + min_width)
+                new_bottom = fixed_y
+            elif handle_type == "sw":  # юго-запад
+                new_left = min(new_x, fixed_x - min_width)
+                new_top = fixed_y
+                new_right = fixed_x
+                new_bottom = max(new_y, fixed_y + min_height)
+            else:  # se - юго-восток
+                new_left = fixed_x
+                new_top = fixed_y
+                new_right = max(new_x, fixed_x + min_width)
+                new_bottom = max(new_y, fixed_y + min_height)
             
             # Обновляем превью
-            x1 = new_center_x - new_width / 2
-            y1 = new_center_y - new_height / 2
-            x2 = new_center_x + new_width / 2
-            y2 = new_center_y + new_height / 2
-            self.canvas.coords(self.resize_preview, x1, y1, x2, y2)
+            self.canvas.coords(self.resize_preview, new_left, new_top, new_right, new_bottom)
             
             return "break"
 
@@ -989,26 +1015,47 @@ class IDEF0App:
         if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
             resize_data = block_data["resize_data"]
             model = block_data["model"]
+            handle_type = resize_data["handle_type"]
             
-            # Вычисляем финальные размеры
-            dx = event.x - resize_data["start_x"]
-            dy = event.y - resize_data["start_y"]
+            # Текущая позиция мыши - это новый угол блока
+            new_x = event.x
+            new_y = event.y
             
-            new_width = resize_data["start_width"]
-            new_height = resize_data["start_height"]
-            new_center_x = resize_data["start_center_x"]
-            new_center_y = resize_data["start_center_y"]
+            # Фиксированный угол (противоположный)
+            fixed_x = resize_data["fixed_x"]
+            fixed_y = resize_data["fixed_y"]
             
-            if "e" in resize_data["handle_type"]:
-                new_width = max(50, resize_data["start_width"] + dx)
-            if "w" in resize_data["handle_type"]:
-                new_width = max(50, resize_data["start_width"] - dx)
-                new_center_x = resize_data["start_center_x"] + dx / 2
-            if "s" in resize_data["handle_type"]:
-                new_height = max(30, resize_data["start_height"] + dy)
-            if "n" in resize_data["handle_type"]:
-                new_height = max(30, resize_data["start_height"] - dy)
-                new_center_y = resize_data["start_center_y"] + dy / 2
+            # Минимальные размеры
+            min_width = 50
+            min_height = 30
+            
+            # Вычисляем новые координаты углов
+            if handle_type == "nw":  # северо-запад
+                new_left = min(new_x, fixed_x - min_width)
+                new_top = min(new_y, fixed_y - min_height)
+                new_right = fixed_x
+                new_bottom = fixed_y
+            elif handle_type == "ne":  # северо-восток
+                new_left = fixed_x
+                new_top = min(new_y, fixed_y - min_height)
+                new_right = max(new_x, fixed_x + min_width)
+                new_bottom = fixed_y
+            elif handle_type == "sw":  # юго-запад
+                new_left = min(new_x, fixed_x - min_width)
+                new_top = fixed_y
+                new_right = fixed_x
+                new_bottom = max(new_y, fixed_y + min_height)
+            else:  # se - юго-восток
+                new_left = fixed_x
+                new_top = fixed_y
+                new_right = max(new_x, fixed_x + min_width)
+                new_bottom = max(new_y, fixed_y + min_height)
+            
+            # Вычисляем новые размеры и центр
+            new_width = new_right - new_left
+            new_height = new_bottom - new_top
+            new_center_x = (new_left + new_right) / 2
+            new_center_y = (new_top + new_bottom) / 2
             
             # Применяем изменения к модели
             model.width = new_width
