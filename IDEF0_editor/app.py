@@ -7,6 +7,8 @@ import tkinter as tk
 from tkinter import ttk
 import os
 import math
+import sys
+import subprocess
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
@@ -155,28 +157,55 @@ class IDEF0App:
         # Инициализируем состояние кнопок undo/redo
         self.update_undo_redo_buttons()
 
-    def format_block_text(self, text, max_width, max_chars=100):
+    def format_block_text(self, text, max_width, max_chars=None):
         """
-        Форматирует текст блока с ограничением по символам.
-        Автоперенос выполняется автоматически через параметр width в create_text.
+        Форматирует текст блока с ограничением по символам и автопереносом до края блока.
+        Текст автоматически переносится при достижении края блока (с учетом отступов).
         
         Args:
             text: Исходный текст
             max_width: Максимальная ширина блока в пикселях (для автопереноса)
-            max_chars: Максимальное количество символов (по умолчанию 100)
+            max_chars: Максимальное количество символов (если None, вычисляется автоматически)
         
         Returns:
-            Текст с ограничением по символам (перенос выполняется автоматически)
+            Текст с ограничением по символам (перенос выполняется автоматически через width)
         """
         if not text:
             return ""
         
-        # Ограничение по символам
-        if len(text) > max_chars:
-            text = text[:max_chars] + "..."
+        # Параметры шрифта для расчета
+        font_size = 10
+        padding = 10  # Отступы по 5px с каждой стороны
         
-        # Возвращаем текст как есть - tkinter Canvas автоматически выполнит перенос
-        # при указании параметра width в create_text
+        # Вычисляем доступную ширину для текста
+        available_width = max_width - padding
+        
+        # Если max_chars не указан, вычисляем его на основе ширины блока
+        if max_chars is None:
+            # Для шрифта Segoe UI 10pt средняя ширина символа примерно 6-7px
+            # Используем более консервативную оценку 7px на символ для учета широких символов
+            chars_per_line = max(1, int(available_width / 7))
+            
+            # Учитываем возможность многострочного текста
+            # Высота строки примерно font_size * 1.4-1.5
+            line_height = font_size * 1.5
+            # Максимальная высота блока обычно позволяет 2-3 строки для стандартного блока
+            # Но мы ограничимся разумным максимумом
+            max_lines = max(1, min(5, int((max_width * 0.6) / line_height)))
+            
+            # Общее количество символов = символы на строку * количество строк
+            max_chars = chars_per_line * max_lines
+            
+            # Ограничения: минимум 15 символов, максимум 300
+            max_chars = max(15, min(300, max_chars))
+        
+        # Ограничение по символам с добавлением многоточия при обрезке
+        if len(text) > max_chars:
+            text = text[:max_chars - 3] + "..."  # Оставляем место для "..."
+        
+        # Возвращаем текст - tkinter Canvas автоматически выполнит перенос
+        # при указании параметра width в create_text (width = available_width)
+        # Перенос происходит до пересечения с краем блока благодаря параметру width
         return text
 
     def setup_hotkeys(self):
@@ -588,12 +617,27 @@ class IDEF0App:
         self.apply_hover_effect(zoom_in_btn)
 
         # Other buttons
-        right_buttons = [("Обучение", "BookOpen"), ("Документация", "HelpCircle")]
-        for text, icon_name in right_buttons:
+        right_buttons = [
+            ("Обучение", "BookOpen", None),
+            ("Документация", "HelpCircle", self.show_documentation),
+            ("Тесты", None, self.open_test_runner)  # Без иконки, только текст
+        ]
+        for text, icon_name, command in right_buttons:
             btn = self.create_toolbar_button(right_frame, text)
-            self.set_widget_icon(btn, icon_name, (20,20), compound='left')
-            if text == "Документация":
-                btn.configure(command=self.show_documentation)
+            if icon_name:
+                self.set_widget_icon(btn, icon_name, (20,20), compound='left')
+            if command:
+                btn.configure(command=command)
+            
+            # Выделяем кнопку "Тесты" красноватой рамкой
+            if text == "Тесты":
+                btn.configure(
+                    highlightthickness=2,
+                    highlightbackground="#dc3545",  # Красноватый цвет
+                    highlightcolor="#dc3545",
+                    relief="flat"
+                )
+            
             btn.pack(side=tk.LEFT, padx=6)
 
         # Отдельная кнопка смены темы
@@ -841,6 +885,8 @@ class IDEF0App:
 
         print(f"Добавлен новый блок через drag-and-drop: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
+        
+        return block_data
 
     def enable_select_mode(self):
         """Включает режим выбора элементов"""
@@ -1657,6 +1703,14 @@ class IDEF0App:
         
         # Удаляем блок из списка
         self.blocks.remove(block_data)
+    
+    def delete_block(self, block_data):
+        """Удаление блока (сохраняет состояние для undo/redo)"""
+        if block_data not in self.blocks:
+            return
+        # Сохраняем состояние перед удалением для undo/redo
+        self.save_state()
+        self.delete_block_direct(block_data)
     
     def show_arrow_action_buttons(self, arrow_data):
         """Показывает кнопки действий для выбранной стрелки."""
@@ -4130,6 +4184,139 @@ class IDEF0App:
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", on_mousewheel)
+    
+    def open_test_runner(self):
+        """Открывает окно тестирования"""
+        try:
+            # Определяем путь к файлу тестов
+            test_file = None
+            
+            if getattr(sys, 'frozen', False):
+                # Если запущено из exe файла
+                exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                
+                # Пробуем несколько возможных путей
+                possible_paths = [
+                    # Рядом с exe (если тесты скопированы)
+                    os.path.join(exe_dir, "tests", "run_all_tests.py"),
+                    # В родительской директории (если exe в dist/)
+                    os.path.join(os.path.dirname(exe_dir), "tests", "run_all_tests.py"),
+                    # В исходной директории проекта (IDEF0_editor/tests/)
+                    os.path.join(os.path.dirname(exe_dir), "IDEF0_editor", "tests", "run_all_tests.py"),
+                    # Альтернативный путь (если dist/IDEF0_editor/)
+                    os.path.join(exe_dir, "IDEF0_editor", "tests", "run_all_tests.py"),
+                    # Еще один вариант (если структура другая)
+                    os.path.join(os.path.dirname(os.path.dirname(exe_dir)), "IDEF0_editor", "tests", "run_all_tests.py"),
+                ]
+                
+                # Нормализуем пути и ищем файл
+                for path in possible_paths:
+                    normalized_path = os.path.normpath(path)
+                    if os.path.exists(normalized_path):
+                        test_file = normalized_path
+                        break
+            else:
+                # Если запущено как скрипт
+                app_dir = os.path.dirname(os.path.abspath(__file__))
+                test_file = os.path.join(app_dir, "tests", "run_all_tests.py")
+            
+            # Проверяем существование файла
+            if not test_file or not os.path.exists(test_file):
+                import tkinter.messagebox as messagebox
+                # Пробуем найти файл в других местах
+                search_dirs = []
+                if getattr(sys, 'frozen', False):
+                    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                    search_dirs = [
+                        exe_dir,
+                        os.path.dirname(exe_dir),
+                        os.path.dirname(os.path.dirname(exe_dir)),
+                    ]
+                else:
+                    search_dirs = [os.path.dirname(os.path.abspath(__file__))]
+                
+                # Ищем файл рекурсивно (но ограничиваем глубину поиска)
+                found_file = None
+                for search_dir in search_dirs:
+                    if not os.path.exists(search_dir):
+                        continue
+                    try:
+                        for root, dirs, files in os.walk(search_dir):
+                            # Ограничиваем глубину поиска - ищем только в папках tests
+                            if "tests" in root and "run_all_tests.py" in files:
+                                found_file = os.path.join(root, "run_all_tests.py")
+                                break
+                            # Также проверяем текущую директорию
+                            if "run_all_tests.py" in files and os.path.basename(root) == "tests":
+                                found_file = os.path.join(root, "run_all_tests.py")
+                                break
+                        if found_file:
+                            break
+                    except (PermissionError, OSError):
+                        # Пропускаем директории, к которым нет доступа
+                        continue
+                
+                if found_file:
+                    test_file = found_file
+                else:
+                    # Формируем список проверенных путей для сообщения
+                    checked_paths = []
+                    if getattr(sys, 'frozen', False):
+                        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+                        checked_paths = [
+                            os.path.join(exe_dir, "tests", "run_all_tests.py"),
+                            os.path.join(os.path.dirname(exe_dir), "tests", "run_all_tests.py"),
+                            os.path.join(os.path.dirname(exe_dir), "IDEF0_editor", "tests", "run_all_tests.py"),
+                        ]
+                    else:
+                        checked_paths = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "run_all_tests.py")]
+                    
+                    messagebox.showerror(
+                        "Ошибка",
+                        f"Файл тестов не найден.\n\nПроверенные пути:\n" + "\n".join(checked_paths) + 
+                        f"\n\nУбедитесь, что файл tests/run_all_tests.py существует в директории проекта."
+                    )
+                    return
+            
+            # Находим Python интерпретатор
+            python_exe = sys.executable
+            if getattr(sys, 'frozen', False):
+                # Для exe пытаемся найти python в системе
+                import shutil
+                python_path = shutil.which('python')
+                if python_path:
+                    python_exe = python_path
+                else:
+                    # Используем sys.executable, но это может быть сам exe
+                    # В этом случае попробуем запустить через subprocess с python
+                    python_exe = 'python'
+            
+            # Запускаем тестовое приложение в отдельном процессе
+            try:
+                subprocess.Popen(
+                    [python_exe, test_file],
+                    cwd=os.path.dirname(test_file),
+                    creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
+                )
+            except FileNotFoundError:
+                import tkinter.messagebox as messagebox
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось найти Python интерпретатор.\n\nПопробуйте запустить тесты вручную:\n{python_exe} {test_file}"
+                )
+            except Exception as e:
+                import tkinter.messagebox as messagebox
+                messagebox.showerror(
+                    "Ошибка",
+                    f"Не удалось запустить тесты:\n{str(e)}"
+                )
+        except Exception as e:
+            import tkinter.messagebox as messagebox
+            import traceback
+            messagebox.showerror(
+                "Ошибка",
+                f"Ошибка при открытии тестов:\n{str(e)}\n\n{traceback.format_exc()}"
+            )
     
     def run(self):
         """Запуск приложения"""
