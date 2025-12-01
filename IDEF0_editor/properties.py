@@ -240,7 +240,7 @@ class PropertiesPanel(tk.Frame):
             ("#cfe8ff", "blue"),
             ("#d9f4d0", "green"),
             ("#fff5c2", "yellow"),
-            ("#ffffff", "white"),
+            ("#000000", "black"),
             ("#E3F2FD", "light_blue"),  # текущий цвет по умолчанию
             ("#ffd6cc", "orange"),
             ("#e6ccff", "purple")

@@ -104,6 +104,10 @@ class Dimensions:
     LAYOUT_PADDING = 12
     SIDEBAR_WIDTH = 54
     PROPERTIES_WIDTH = 360
+    
+    # Grid
+    GRID_MINOR_STEP = 20  # Шаг мелкой сетки в пикселях
+    GRID_MAJOR_STEP = 100  # Шаг крупной сетки в пикселях
 
 class Fonts:
     # Шрифты как в HTML макете

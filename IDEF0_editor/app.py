@@ -4,14 +4,15 @@
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, filedialog, messagebox
 import os
 import math
 import sys
+import json
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
-from models import Block, Arrow
+from models import Block, Arrow, LayerManager
 
 class IDEF0App:
     def __init__(self):
@@ -33,11 +34,16 @@ class IDEF0App:
         self.clipboard = None  # хранит скопированный элемент (блок или стрелка)
         self.clipboard_type = None  # "block" или "arrow"
         self.setup_window()
+        # Инициализируем layer_manager до setup_ui, так как он используется в setup_main_layout
+        self.layer_manager = LayerManager()  # Менеджер слоев для иерархии
+        self.current_right_panel = "properties"  # или "layers"
+        self.layers_panel_visible = False
         self.setup_ui()
         self.blocks = []
         self.arrows = []  # список стрелок
         self.next_block_id = 1
         self.next_arrow_id = 1  # счетчик для ID стрелок
+        self.current_file_path = None  # путь к текущему файлу
         self.is_panning = False  # флаг режима панорамирования
         self.pan_start_x = 0
         self.pan_start_y = 0
@@ -388,7 +394,16 @@ class IDEF0App:
             btn = self.create_toolbar_button(toolbar_frame, text)
             self.set_widget_icon(btn, icon_name, size, compound='left')
             btn.pack(side=tk.LEFT, padx=6)
-        
+            
+            # Привязываем обработчики для кнопок файлов
+            if text == "Новый":
+                btn.configure(command=self.new_file)
+            elif text == "Открыть":
+                btn.configure(command=self.open_file)
+            elif text == "Сохранить":
+                btn.configure(command=self.save_file)
+            elif text == "Сохранить как":
+                btn.configure(command=self.save_file_as)
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -490,6 +505,11 @@ class IDEF0App:
         self.properties_panel = PropertiesPanel(main_frame, on_properties_change=self.on_properties_change)
         self.properties_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
 
+        # Панель слоев (изначально скрыта)
+        self.setup_layers_panel(main_frame)
+        
+        # Инициализируем footer с информацией об уровне (будет вызван после создания footer_right_label)
+
     def setup_sidebar(self, parent):
         """Левая панель инструментов"""
         sidebar_frame = tk.Frame(
@@ -544,10 +564,13 @@ class IDEF0App:
                 btn.configure(command=self.delete_selected)
 
             if icon_name == "ChevronUp":
-                btn.configure(command=self.bring_selected_forward)
+                btn.configure(command=self.level_up)
 
             if icon_name == "ChevronDown":
-                btn.configure(command=self.send_selected_backward)
+                btn.configure(command=self.level_down)
+
+            if icon_name == "Layers":
+                btn.configure(command=self.toggle_layers_panel)
 
             # Привязываем обработчики для кнопки добавления блока ТОЛЬКО drag-and-drop
             if icon_name == "Square":
@@ -613,7 +636,7 @@ class IDEF0App:
             self.create_block_at_position(x, y)
 
     def create_block_at_position(self, x, y):
-        """Создает блок в указанной позиции"""
+        """Создает блок в указанной позиции с учетом текущего уровня"""
         # Базовые размеры
         width, height = 150, 80
 
@@ -621,15 +644,33 @@ class IDEF0App:
         block_id = f"block_{self.next_block_id}"
         self.next_block_id += 1
 
+        # Генерируем код на основе текущего уровня
+        parent_id = self.layer_manager.get_current_parent_id()
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        
+        if parent_id:
+            # Находим родительский блок для наследования кода
+            parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id), None)
+            if parent_block:
+                # Считаем сколько уже есть блоков на этом уровне с тем же родителем
+                sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
+                code = f"{parent_block.code}.{len(sibling_blocks) + 1}"
+            else:
+                code = f"A{len(current_blocks) + 1}"
+        else:
+            # Корневой уровень
+            code = f"A{len(current_blocks) + 1}"
+
         # Создаем модель блока
         block_model = Block(
             block_id=block_id,
-            name=f"Блок {self.next_block_id - 1}",
-            code=f"A{self.next_block_id - 1}",
+            name=f"Блок {code}",
+            code=code,
             x=x,
             y=y,
             width=width,
-            height=height
+            height=height,
+            parent_id=parent_id
         )
 
         # Рисуем прямоугольник
@@ -669,6 +710,8 @@ class IDEF0App:
         # Делаем блок перемещаемым и выбираемым
         self.make_block_interactive(block_data)
 
+        # Проверяем, что блок принадлежит текущему уровню перед отображением
+        # (новый блок всегда должен быть виден, так как он создается на текущем уровне)
         # Автоматически выбираем новый блок
         self.select_block(block_data)
 
@@ -1041,6 +1084,12 @@ class IDEF0App:
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
+        # Проверяем, что блок принадлежит текущему уровню
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        if block_data["model"] not in current_blocks:
+            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню")
+            return
+        
         # Если открыто меню настроек, закрываем его
         if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
             try:
@@ -1310,6 +1359,19 @@ class IDEF0App:
         )
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
+        
+        # Footer для отображения текущего уровня
+        self.footer_right_label = tk.Label(
+            canvas_frame,
+            text="Уровень 0",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_SECONDARY,
+            bg=Colors.SURFACE
+        )
+        self.footer_right_label.place(relx=1, rely=1, x=-14, y=-10, anchor='se')
+        
+        # Обновляем footer после создания
+        self.root.after(100, self.update_footer_info)
         
         # Плашка с кнопками undo/redo и копирование/вставка в рабочей области
         self.create_workspace_toolbar(canvas_frame)
@@ -2568,6 +2630,7 @@ class IDEF0App:
         self.refresh_icons_for_theme()
 
         # Перерисовываем сетку с новыми цветами
+        # Сетка всегда рисуется с одинаковыми размерами независимо от темы
         if hasattr(self, "canvas"):
             self.draw_grid()
 
@@ -2746,7 +2809,7 @@ class IDEF0App:
             cx = self.canvas.canvasx(sx)
             cy = self.canvas.canvasy(sy)
 
-        # Масштабируем все элементы
+        # Масштабируем все элементы, включая сетку
         self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
 
         # Перерисовываем/обновляем элементы, чувствительные к масштабу
@@ -3120,16 +3183,20 @@ class IDEF0App:
         left, top, right, bottom = self.canvas.cget('scrollregion').split()
         left, top, right, bottom = int(left), int(top), int(right), int(bottom)
 
-        # Minor grid (20px) - более светлая
-        for i in range(left, right, 20):
+        # Используем константы для размеров сетки (одинаковые для всех тем)
+        minor_step = Dimensions.GRID_MINOR_STEP
+        major_step = Dimensions.GRID_MAJOR_STEP
+
+        # Minor grid - более светлая
+        for i in range(left, right, minor_step):
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID, width=1, tags='grid')
-        for i in range(top, bottom, 20):
+        for i in range(top, bottom, minor_step):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID, width=1, tags='grid')
 
-        # Major grid (100px) - немного темнее
-        for i in range(left, right, 100):
+        # Major grid - немного темнее
+        for i in range(left, right, major_step):
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
-        for i in range(top, bottom, 100):
+        for i in range(top, bottom, major_step):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
 
         # Отправляем сетку под все элементы, чтобы она не перекрывала объекты
@@ -3150,15 +3217,23 @@ class IDEF0App:
         """Поднимает выбранный элемент (блок или стрелку) на передний план."""
         if self.selected_block:
             self._raise_block(self.selected_block)
+            print(f"Блок {self.selected_block['id']} поднят на передний план")
         elif self.selected_arrow:
             self._raise_arrow(self.selected_arrow)
+            print(f"Стрелка {self.selected_arrow['arrow'].id} поднята на передний план")
+        else:
+            print("Выберите блок или стрелку для изменения порядка слоев")
 
     def send_selected_backward(self):
         """Опускает выбранный элемент (блок или стрелку) на задний план (но над сеткой)."""
         if self.selected_block:
             self._lower_block(self.selected_block)
+            print(f"Блок {self.selected_block['id']} опущен на задний план")
         elif self.selected_arrow:
             self._lower_arrow(self.selected_arrow)
+            print(f"Стрелка {self.selected_arrow['arrow'].id} опущена на задний план")
+        else:
+            print("Выберите блок или стрелку для изменения порядка слоев")
         self._ensure_grid_at_bottom()
 
     def _raise_block(self, block_data):
@@ -3166,11 +3241,23 @@ class IDEF0App:
         if not block_data:
             return
         
+        block_id = block_data.get("id")
+        if not block_id:
+            return
+        
         try:
+            # Поднимаем все элементы блока по тегу (более надежный способ)
+            self.canvas.tag_raise(block_id)
+            
+            # Также поднимаем отдельные элементы для надежности
             if block_data.get("rect_id"):
                 self.canvas.tag_raise(block_data["rect_id"])
             if block_data.get("text_id"):
                 self.canvas.tag_raise(block_data["text_id"])
+            if block_data.get("code_text_id"):
+                self.canvas.tag_raise(block_data["code_text_id"])
+            
+            # Поднимаем маркеры изменения размера
             for handle_id in block_data.get("resize_handles", {}).values():
                 try:
                     self.canvas.tag_raise(handle_id)
@@ -3181,6 +3268,7 @@ class IDEF0App:
         except (KeyError, AttributeError):
             pass
 
+        # Поднимаем кнопки действий, если блок выбран
         if self.selected_block == block_data:
             for btn_data in self.block_action_buttons:
                 try:
@@ -3194,11 +3282,23 @@ class IDEF0App:
         if not block_data:
             return
         
+        block_id = block_data.get("id")
+        if not block_id:
+            return
+        
         try:
+            # Опускаем все элементы блока по тегу (более надежный способ)
+            self.canvas.tag_lower(block_id)
+            
+            # Также опускаем отдельные элементы для надежности
             if block_data.get("rect_id"):
                 self.canvas.tag_lower(block_data["rect_id"])
             if block_data.get("text_id"):
                 self.canvas.tag_lower(block_data["text_id"])
+            if block_data.get("code_text_id"):
+                self.canvas.tag_lower(block_data["code_text_id"])
+            
+            # Опускаем маркеры изменения размера
             for handle_id in block_data.get("resize_handles", {}).values():
                 try:
                     self.canvas.tag_lower(handle_id)
@@ -3209,6 +3309,7 @@ class IDEF0App:
         except (KeyError, AttributeError):
             pass
 
+        # Опускаем кнопки действий, если блок выбран
         if self.selected_block == block_data:
             for btn_data in self.block_action_buttons:
                 try:
@@ -3310,6 +3411,377 @@ class IDEF0App:
         
         # Убеждаемся, что сетка остается внизу
         self._ensure_grid_at_bottom()
+
+    def setup_layers_panel(self, parent):
+        """Создает панель слоев"""
+        # Основной контейнер для панели слоев
+        self.layers_panel_frame = tk.Frame(
+            parent,
+            bg=Colors.SURFACE,
+            width=Dimensions.PROPERTIES_WIDTH,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER
+        )
+        self.layers_panel_frame.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+        self.layers_panel_frame.grid_remove()  # Скрываем initially
+        self.layers_panel_frame.pack_propagate(False)
+
+        # Заголовок панели слоев
+        header_frame = tk.Frame(self.layers_panel_frame, bg=Colors.SURFACE, height=40)
+        header_frame.pack(fill=tk.X, padx=16, pady=8)
+        header_frame.pack_propagate(False)
+
+        title_label = tk.Label(
+            header_frame,
+            text="Слои диаграммы",
+            font=Fonts.SECTION,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT)
+
+        close_btn = tk.Button(
+            header_frame,
+            text="×",
+            font=("Segoe UI", 16, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_SECONDARY,
+            relief="flat",
+            bd=0,
+            command=self.show_properties_panel
+        )
+        close_btn.pack(side=tk.RIGHT)
+        self.apply_hover_effect(close_btn, base_attr="SURFACE")
+
+        # Контейнер для дерева слоев
+        tree_frame = tk.Frame(self.layers_panel_frame, bg=Colors.SURFACE)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+
+        # Создаем Treeview для иерархии
+        self.layers_tree = ttk.Treeview(
+            tree_frame,
+            columns=("code",),
+            show="tree",
+            selectmode="browse"
+        )
+
+        # Стилизация Treeview
+        style = ttk.Style()
+        style.configure("Treeview", 
+                    background=Colors.SURFACE,
+                    fieldbackground=Colors.SURFACE,
+                    foreground=Colors.TEXT_PRIMARY,
+                    font=Fonts.BODY)
+        style.configure("Treeview.Heading",
+                    background=Colors.SURFACE,
+                    foreground=Colors.TEXT_PRIMARY)
+        style.map("Treeview", background=[('selected', Colors.PRIMARY)])
+
+        # Scrollbar для дерева
+        tree_scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.layers_tree.yview)
+        self.layers_tree.configure(yscrollcommand=tree_scroll.set)
+
+        # Размещаем дерево и скроллбар
+        self.layers_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Привязываем обработчик двойного клика
+        self.layers_tree.bind("<Double-1>", self.on_layer_double_click)
+
+    def toggle_layers_panel(self):
+        """Переключает между панелью свойств и панелью слоев"""
+        if self.current_right_panel == "properties":
+            self.show_layers_panel()
+        else:
+            self.show_properties_panel()
+
+    def show_layers_panel(self):
+        """Показывает панель слоев вместо панели свойств"""
+        # Скрываем свойства
+        self.properties_panel.grid_remove()
+        
+        # Показываем слои
+        self.layers_panel_frame.grid()
+        self.update_layers_tree()
+        
+        self.current_right_panel = "layers"
+        self.layers_panel_visible = True
+        print("Панель слоев открыта")
+
+    def show_properties_panel(self):
+        """Показывает панель свойств вместо слоев"""
+        # Скрываем слои
+        self.layers_panel_frame.grid_remove()
+        
+        # Показываем свойства
+        self.properties_panel.grid()
+        
+        self.current_right_panel = "properties"
+        self.layers_panel_visible = False
+        print("Панель свойств открыта")
+
+    def update_layers_tree(self):
+        """Обновляет дерево слоев"""
+        # Очищаем текущее дерево
+        for item in self.layers_tree.get_children():
+            self.layers_tree.delete(item)
+
+        # Строим иерархию
+        hierarchy = self.layer_manager.build_hierarchy_tree([b["model"] for b in self.blocks])
+        
+        # Добавляем корневой уровень
+        root_item = self.layers_tree.insert("", "end", text="Корневой уровень", 
+                                        values=("",), tags=("root",))
+        
+        # Рекурсивно добавляем дочерние элементы
+        self.add_children_to_tree(root_item, hierarchy)
+        
+        # Раскрываем все уровни
+        def expand_all(parent=""):
+            for child in self.layers_tree.get_children(parent):
+                self.layers_tree.item(child, open=True)
+                expand_all(child)
+        
+        expand_all()
+        
+    def add_children_to_tree(self, parent_item, children):
+        """Рекурсивно добавляет дочерние элементы в дерево"""
+        for child_data in children:
+            block = child_data['block']
+            
+            # Отображаем код блока
+            item_text = f"{block.code}"
+            
+            child_item = self.layers_tree.insert(
+                parent_item, "end", 
+                text=item_text,
+                values=(block.id,),
+                tags=("block",)
+            )
+            
+            # Рекурсивно добавляем детей
+            if child_data['children']:
+                self.add_children_to_tree(child_item, child_data['children'])
+
+    def on_layer_double_click(self, event):
+        """Обработчик двойного клика по элементу дерева слоев"""
+        item = self.layers_tree.selection()[0] if self.layers_tree.selection() else None
+        if item:
+            tags = self.layers_tree.item(item, "tags")
+            values = self.layers_tree.item(item, "values")
+            
+            if "block" in tags and values:
+                block_id = values[0]
+                block_code = self.layers_tree.item(item, "text")
+                
+                print(f"Двойной клик на блоке {block_code} (id: {block_id})")
+                
+                # Переходим на уровень блока
+                self.navigate_to_block_level(block_id)
+                
+                # Ждем обновления интерфейса
+                self.root.update()
+                
+                # Находим блок по ID модели
+                for block_data in self.blocks:
+                    if block_data["model"].id == block_id:
+                        print(f"Найден блок: {block_data['model'].code}, выделяем...")
+                        self.select_block(block_data)
+                        break
+                else:
+                    print(f"Блок с id {block_id} не найден в списке блоков")
+
+    def navigate_to_block_level(self, block_id):
+        """Переходит на уровень указанного блока"""
+        # Находим блок
+        block_data = next((b for b in self.blocks if b["model"].id == block_id), None)
+        if block_data:
+            path = self.build_path_to_block(block_id)  
+            
+            # Сохраняем текущее состояние
+            current_level_key = self.layer_manager.get_current_level_key()
+            self.save_current_level_state(current_level_key)
+            
+            # Переходим на новый уровень
+            self.layer_manager.goto_level_path(path)
+            
+            # Восстанавливаем состояние
+            new_level_key = self.layer_manager.get_current_level_key()
+            self.restore_level_state(new_level_key)
+            
+            self.update_footer_info()
+            print(f"Перешли на уровень блока {block_data['model'].code}")
+
+    def build_path_to_block(self, target_block_id):
+        """Строит путь до указанного блока"""
+        def find_path(current_block_id, path):
+            if current_block_id == target_block_id:
+                return path + [current_block_id]
+            
+            # Ищем детей текущего блока
+            child_blocks = [b for b in self.blocks if b["model"].parent_id == current_block_id]
+            
+            for child_block in child_blocks:
+                result = find_path(child_block["model"].id, path + [current_block_id])
+                if result:
+                    return result
+            
+            return None
+        
+        # Начинаем с корневого уровня
+        root_blocks = [b for b in self.blocks if b["model"].parent_id is None]
+        for root_block in root_blocks:
+            result = find_path(root_block["model"].id, [])
+            if result:
+                return result[:-1]  # Возвращаем путь без самого блока (только родители)
+        
+        return []
+
+    def save_current_level_state(self, level_key):
+        """Сохраняет состояние текущего уровня"""
+        # Получаем текущую позицию прокрутки
+        x_view = self.canvas.xview()[0]
+        y_view = self.canvas.yview()[0]
+        
+        state = {
+            'x_view': x_view,
+            'y_view': y_view,
+            'selected_block_id': self.selected_block["id"] if self.selected_block else None
+        }
+        
+        self.layer_manager.save_level_state(level_key, state)
+
+    def restore_level_state(self, level_key):
+        """Восстанавливает состояние уровня"""
+        # Обновляем холст
+        self.refresh_canvas()
+        
+        # Восстанавливаем позицию прокрутки если есть сохраненное состояние
+        state = self.layer_manager.get_level_state(level_key)
+        if state:
+            self.canvas.xview_moveto(state['x_view'])
+            self.canvas.yview_moveto(state['y_view'])
+            
+            # Восстанавливаем выделение блока если есть
+            if state['selected_block_id']:
+                block_data = next((b for b in self.blocks if b["id"] == state['selected_block_id']), None)
+                if block_data:
+                    self.select_block(block_data)
+        else:
+            # Если состояния нет, устанавливаем вид по умолчанию
+            self.canvas.xview_moveto(0.5)
+            self.canvas.yview_moveto(0.5)
+
+    def refresh_canvas(self):
+        """Обновляет холст в соответствии с текущим уровнем"""
+        # Очищаем холст
+        self.canvas.delete("all")
+        
+        # Перерисовываем сетку
+        self.draw_grid()
+        
+        # Получаем блоки для текущего уровня
+        current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        current_blocks_ids = [block.id for block in current_blocks_models]
+        
+        # Перерисовываем только блоки текущего уровня
+        for block_data in self.blocks:
+            if block_data["model"].id in current_blocks_ids:
+                self.redraw_block(block_data)
+        
+        # Перерисовываем стрелки, которые связаны с видимыми блоками
+        self.draw_all_arrows()
+        
+        # Сбрасываем выделение только если выбранный блок не принадлежит текущему уровню
+        if self.selected_block and self.selected_block["model"].id not in current_blocks_ids:
+            self.selected_block = None
+            self.properties_panel.update_properties(None)
+            print("Сброс выделения: блок не принадлежит текущему уровню")
+
+    def redraw_block(self, block_data):
+        """Перерисовывает блок на холсте"""
+        model = block_data["model"]
+        
+        # Рисуем прямоугольник
+        rect = self.canvas.create_rectangle(
+            model.x - model.width / 2, model.y - model.height / 2,
+            model.x + model.width / 2, model.y + model.height / 2,
+            fill=model.color,
+            outline=Colors.BLOCK_BORDER,
+            width=model.border_width,
+            tags=("block", block_data["id"])
+        )
+
+        # Добавляем основной текст
+        formatted_text = self.format_block_text(model.name, model.width)
+        text = self.canvas.create_text(
+            model.x, model.y,
+            text=formatted_text,
+            font=("Segoe UI", 10),
+            fill=Colors.TEXT_PRIMARY,
+            justify="center",
+            width=model.width - 10,
+            tags=("block_text", block_data["id"])
+        )
+
+        # Обновляем ID элементов в блоке
+        block_data["rect_id"] = rect
+        block_data["text_id"] = text
+
+        # Делаем блок интерактивным
+        self.make_block_interactive(block_data)
+
+    def level_down(self):
+        """Проваливаемся в выбранный блок (переход на уровень детализации блока)"""
+        if not self.selected_block:
+            print("Выберите блок для перехода на уровень ниже")
+            return
+        
+        # Проверяем, что блок принадлежит текущему уровню
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        if self.selected_block["model"] not in current_blocks:
+            print("Можно проваливаться только в блоки текущего уровня")
+            return
+        
+        # Сохраняем состояние текущего уровня
+        current_level_key = self.layer_manager.get_current_level_key()
+        self.save_current_level_state(current_level_key)
+        
+        # Переходим на уровень детализации блока
+        self.layer_manager.enter_block_level(self.selected_block["model"])
+        
+        # Восстанавливаем состояние нового уровня или показываем пустой
+        new_level_key = self.layer_manager.get_current_level_key()
+        self.restore_level_state(new_level_key)
+        
+        # Обновляем панель слоев, если она открыта
+        if self.layers_panel_visible:
+            self.update_layers_tree()
+        
+        self.update_footer_info()
+        print(f"Перешли на уровень детализации блока {self.selected_block['model'].code}")
+
+    def level_up(self):
+        """Возврат на уровень выше"""
+        if self.layer_manager.exit_level():
+            # Восстанавливаем состояние предыдущего уровня
+            level_key = self.layer_manager.get_current_level_key()
+            self.restore_level_state(level_key)
+            
+            # Обновляем панель слоев, если она открыта
+            if self.layers_panel_visible:
+                self.update_layers_tree()
+            
+            self.update_footer_info()
+            print(f"Вернулись на уровень выше")
+        else:
+            print("Уже на корневом уровне")
+
+    def update_footer_info(self):
+        """Обновляет информацию в футере о текущем уровне"""
+        if hasattr(self, 'footer_right_label'):
+            level_path = self.layer_manager.get_level_path([b["model"] for b in self.blocks])
+            self.footer_right_label.config(text=level_path)
     
     def draw_arrow(self, arrow_data):
         """
@@ -3946,24 +4418,9 @@ class IDEF0App:
     
     def restore_state(self, state):
         """Восстанавливает состояние из сохраненного снимка"""
-        # Очищаем текущее состояние
-        for block_data in self.blocks:
-            try:
-                self.canvas.delete(block_data["rect_id"])
-                self.canvas.delete(block_data["text_id"])
-            except tk.TclError:
-                pass
-        
-        for arrow_data in self.arrows:
-            try:
-                if arrow_data.get("line_id"):
-                    self.canvas.delete(arrow_data["line_id"])
-                if arrow_data.get("hitbox_id"):
-                    self.canvas.delete(arrow_data["hitbox_id"])
-                if arrow_data.get("arrowhead_id"):
-                    self.canvas.delete(arrow_data["arrowhead_id"])
-            except tk.TclError:
-                pass
+        # Очищаем canvas полностью
+        self.canvas.delete("all")
+        self.draw_grid()
         
         # Восстанавливаем счетчики
         self.next_block_id = state["next_block_id"]
@@ -3975,7 +4432,7 @@ class IDEF0App:
         self.selected_block = None
         self.selected_arrow = None
         
-        # Восстанавливаем блоки
+        # Восстанавливаем блоки (только данные, без визуализации)
         for block_dict in state["blocks"]:
             block = Block(
                 block_id=block_dict["id"],
@@ -3988,44 +4445,20 @@ class IDEF0App:
                 width=block_dict["width"],
                 height=block_dict["height"],
                 color=block_dict["color"],
-                border_width=block_dict["border_width"]
+                border_width=block_dict["border_width"],
+                parent_id=block_dict.get("parent_id")
             )
             
-            # Создаем визуальное представление
-            x1 = block.x - block.width / 2
-            y1 = block.y - block.height / 2
-            x2 = block.x + block.width / 2
-            y2 = block.y + block.height / 2
-            
-            rect = self.canvas.create_rectangle(
-                x1, y1, x2, y2,
-                fill=block.color,
-                outline=Colors.BLOCK_BORDER,
-                width=block.border_width,
-                tags=("block", block.id)
-            )
-            
-            formatted_text = self.format_block_text(block.name, block.width)
-            text = self.canvas.create_text(
-                block.x, block.y,
-                text=formatted_text,
-                font=("Segoe UI", 10),
-                fill=Colors.TEXT_PRIMARY,
-                justify="center",
-                width=block.width - 10,
-                tags=("block_text", block.id)
-            )
-            
+            # Создаем block_data без визуальных элементов (они будут созданы в refresh_canvas)
             block_data = {
                 "id": block.id,
                 "model": block,
-                "rect_id": rect,
-                "text_id": text,
+                "rect_id": None,  # Будет создан в refresh_canvas
+                "text_id": None,  # Будет создан в refresh_canvas
                 "resize_handles": {}
             }
             
             self.blocks.append(block_data)
-            self.make_block_interactive(block_data)
         
         # Восстанавливаем стрелки
         for arrow_dict in state["arrows"]:
@@ -4075,6 +4508,9 @@ class IDEF0App:
         previous_state = self.undo_stack.pop()
         self.restore_state(previous_state)
         
+        # Обновляем canvas для текущего уровня
+        self.refresh_canvas()
+        
         # Обновляем состояние кнопок
         self.update_undo_redo_buttons()
     
@@ -4093,6 +4529,9 @@ class IDEF0App:
         # Восстанавливаем состояние из redo
         next_state = self.redo_stack.pop()
         self.restore_state(next_state)
+        
+        # Обновляем canvas для текущего уровня
+        self.refresh_canvas()
         
         # Обновляем состояние кнопок
         self.update_undo_redo_buttons()
@@ -4120,7 +4559,8 @@ class IDEF0App:
                 "width": block.width,
                 "height": block.height,
                 "color": block.color,
-                "border_width": block.border_width
+                "border_width": block.border_width,
+                "parent_id": block.parent_id
             })
         
         # Сохраняем все стрелки
@@ -4162,6 +4602,86 @@ class IDEF0App:
             else:
                 self.redo_btn.configure(state="disabled")
     
+    def new_file(self):
+        """Создает новый файл"""
+        if messagebox.askyesno("Новый файл", "Создать новый файл? Все несохраненные изменения будут потеряны."):
+            # Очищаем все
+            self.blocks = []
+            self.arrows = []
+            self.selected_block = None
+            self.selected_arrow = None
+            self.next_block_id = 1
+            self.next_arrow_id = 1
+            self.layer_manager = LayerManager()
+            self.undo_stack = []
+            self.redo_stack = []
+            
+            # Очищаем canvas
+            self.canvas.delete("all")
+            self.draw_grid()
+            
+            # Обновляем панель свойств
+            self.properties_panel.update_properties(None)
+            self.update_footer_info()
+            if self.layers_panel_visible:
+                self.update_layers_tree()
+    
+    def save_file(self):
+        """Сохраняет текущий файл"""
+        if not hasattr(self, 'current_file_path') or not self.current_file_path:
+            self.save_file_as()
+        else:
+            self._save_to_file(self.current_file_path)
+    
+    def save_file_as(self):
+        """Сохраняет файл с выбором пути"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if file_path:
+            self.current_file_path = file_path
+            self._save_to_file(file_path)
+    
+    def _save_to_file(self, file_path):
+        """Сохраняет данные в файл"""
+        try:
+            state = self.save_current_state()
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            messagebox.showinfo("Сохранение", "Файл успешно сохранен!")
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+    
+    def open_file(self):
+        """Открывает файл"""
+        file_path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if file_path:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    state = json.load(f)
+                
+                # Сбрасываем уровень на корневой перед восстановлением
+                self.layer_manager.current_level_path = []
+                
+                # Восстанавливаем состояние
+                self.restore_state(state)
+                self.current_file_path = file_path
+                
+                # Обновляем canvas для текущего уровня (показываем только корневой уровень)
+                self.refresh_canvas()
+                
+                # Обновляем интерфейс
+                self.update_footer_info()
+                if self.layers_panel_visible:
+                    self.update_layers_tree()
+                
+                messagebox.showinfo("Открытие", "Файл успешно открыт!")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{str(e)}")
+    
     def copy_selected(self):
         """Копирует выбранный элемент (блок или стрелку) в буфер обмена"""
         if self.selected_block:
@@ -4178,7 +4698,8 @@ class IDEF0App:
                 "width": block.width,
                 "height": block.height,
                 "color": block.color,
-                "border_width": block.border_width
+                "border_width": block.border_width,
+                "parent_id": block.parent_id
             }
             self.clipboard_type = "block"
         elif self.selected_arrow:
@@ -4246,7 +4767,8 @@ class IDEF0App:
                 width=block_data["width"],
                 height=block_data["height"],
                 color=block_data["color"],
-                border_width=block_data["border_width"]
+                border_width=block_data["border_width"],
+                parent_id=block_data.get("parent_id")
             )
             
             # Создаем визуальное представление
