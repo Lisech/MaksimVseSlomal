@@ -1656,8 +1656,18 @@ class IDEF0App:
         self.apply_hover_effect(self.theme_toggle_btn)
         self.update_theme_button_label()
         
-        # Показываем меню
-        settings_panel.grid()
+        # Показываем меню (если оно было скрыто через grid_remove)
+        try:
+            grid_info = settings_panel.grid_info()
+            if not grid_info:
+                # Если панель была скрыта через grid_remove, показываем её
+                settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+        except Exception:
+            # Если возникла ошибка, просто пытаемся показать панель
+            try:
+                settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+            except Exception:
+                pass
         
         # Привязываем ESC для закрытия меню
         def on_escape(event):
@@ -3153,87 +3163,153 @@ class IDEF0App:
 
     def _raise_block(self, block_data):
         """Поднимает указанный блок и связанные элементы."""
+        if not block_data:
+            return
+        
         try:
-            self.canvas.tag_raise(block_data["rect_id"])
-            self.canvas.tag_raise(block_data["text_id"])
+            if block_data.get("rect_id"):
+                self.canvas.tag_raise(block_data["rect_id"])
+            if block_data.get("text_id"):
+                self.canvas.tag_raise(block_data["text_id"])
             for handle_id in block_data.get("resize_handles", {}).values():
-                self.canvas.tag_raise(handle_id)
+                try:
+                    self.canvas.tag_raise(handle_id)
+                except tk.TclError:
+                    pass
         except tk.TclError:
+            pass
+        except (KeyError, AttributeError):
             pass
 
         if self.selected_block == block_data:
             for btn_data in self.block_action_buttons:
                 try:
-                    self.canvas.tag_raise(btn_data.get("window_id"))
+                    if btn_data.get("window_id"):
+                        self.canvas.tag_raise(btn_data["window_id"])
                 except tk.TclError:
                     pass
 
     def _lower_block(self, block_data):
         """Опускает указанный блок и связанные элементы."""
+        if not block_data:
+            return
+        
         try:
-            self.canvas.tag_lower(block_data["rect_id"])
-            self.canvas.tag_lower(block_data["text_id"])
+            if block_data.get("rect_id"):
+                self.canvas.tag_lower(block_data["rect_id"])
+            if block_data.get("text_id"):
+                self.canvas.tag_lower(block_data["text_id"])
             for handle_id in block_data.get("resize_handles", {}).values():
-                self.canvas.tag_lower(handle_id)
+                try:
+                    self.canvas.tag_lower(handle_id)
+                except tk.TclError:
+                    pass
         except tk.TclError:
+            pass
+        except (KeyError, AttributeError):
             pass
 
         if self.selected_block == block_data:
             for btn_data in self.block_action_buttons:
                 try:
-                    self.canvas.tag_lower(btn_data.get("window_id"))
+                    if btn_data.get("window_id"):
+                        self.canvas.tag_lower(btn_data["window_id"])
                 except tk.TclError:
                     pass
+        
+        # Убеждаемся, что сетка остается внизу
+        self._ensure_grid_at_bottom()
 
     def _raise_arrow(self, arrow_data):
         """Поднимает стрелку и её вспомогательные элементы."""
+        if not arrow_data or "arrow" not in arrow_data:
+            return
+        
         try:
             if arrow_data.get("line_id"):
                 self.canvas.tag_raise(arrow_data["line_id"])
             if arrow_data.get("arrowhead_id"):
                 self.canvas.tag_raise(arrow_data["arrowhead_id"])
+            if arrow_data.get("hitbox_id"):
+                self.canvas.tag_raise(arrow_data["hitbox_id"])
+            if arrow_data.get("text_id"):
+                self.canvas.tag_raise(arrow_data["text_id"])
+            if arrow_data.get("text_outline_ids"):
+                for outline_id in arrow_data["text_outline_ids"]:
+                    try:
+                        self.canvas.tag_raise(outline_id)
+                    except tk.TclError:
+                        pass
         except tk.TclError:
             pass
+        except (KeyError, AttributeError):
+            pass
 
-        handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
-        if handles:
-            for handle_id in handles.values():
-                try:
-                    self.canvas.tag_raise(handle_id)
-                except tk.TclError:
-                    pass
+        try:
+            handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
+            if handles:
+                for handle_id in handles.values():
+                    try:
+                        self.canvas.tag_raise(handle_id)
+                    except tk.TclError:
+                        pass
+        except (KeyError, AttributeError):
+            pass
 
         if self.selected_arrow == arrow_data:
             for btn_data in self.arrow_action_buttons:
                 try:
-                    self.canvas.tag_raise(btn_data.get("window_id"))
+                    if btn_data.get("window_id"):
+                        self.canvas.tag_raise(btn_data["window_id"])
                 except tk.TclError:
                     pass
 
     def _lower_arrow(self, arrow_data):
         """Опускает стрелку и её вспомогательные элементы."""
+        if not arrow_data or "arrow" not in arrow_data:
+            return
+        
         try:
             if arrow_data.get("line_id"):
                 self.canvas.tag_lower(arrow_data["line_id"])
             if arrow_data.get("arrowhead_id"):
                 self.canvas.tag_lower(arrow_data["arrowhead_id"])
+            if arrow_data.get("hitbox_id"):
+                self.canvas.tag_lower(arrow_data["hitbox_id"])
+            if arrow_data.get("text_id"):
+                self.canvas.tag_lower(arrow_data["text_id"])
+            if arrow_data.get("text_outline_ids"):
+                for outline_id in arrow_data["text_outline_ids"]:
+                    try:
+                        self.canvas.tag_lower(outline_id)
+                    except tk.TclError:
+                        pass
         except tk.TclError:
             pass
+        except (KeyError, AttributeError):
+            pass
 
-        handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
-        if handles:
-            for handle_id in handles.values():
-                try:
-                    self.canvas.tag_lower(handle_id)
-                except tk.TclError:
-                    pass
+        try:
+            handles = self.arrow_drag_handles.get(arrow_data["arrow"].id)
+            if handles:
+                for handle_id in handles.values():
+                    try:
+                        self.canvas.tag_lower(handle_id)
+                    except tk.TclError:
+                        pass
+        except (KeyError, AttributeError):
+            pass
 
         if self.selected_arrow == arrow_data:
             for btn_data in self.arrow_action_buttons:
                 try:
-                    self.canvas.tag_lower(btn_data.get("window_id"))
+                    if btn_data.get("window_id"):
+                        self.canvas.tag_lower(btn_data["window_id"])
                 except tk.TclError:
                     pass
+        
+        # Убеждаемся, что сетка остается внизу
+        self._ensure_grid_at_bottom()
     
     def draw_arrow(self, arrow_data):
         """
