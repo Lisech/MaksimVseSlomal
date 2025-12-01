@@ -8,7 +8,6 @@ from tkinter import ttk
 import os
 import math
 import sys
-import subprocess
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
@@ -73,78 +72,6 @@ class IDEF0App:
         self.root.configure(bg=Colors.BACKGROUND)
         self.root.minsize(1200, 800)
         
-        # Создаем скрытое меню для акселераторов (для более надежной работы горячих клавиш)
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        
-        # Создаем меню Edit со скрытыми пунктами для акселераторов
-        edit_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Edit", menu=edit_menu)
-        
-        # Обертки для методов с проверкой фокуса
-        def safe_copy():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.copy_selected()
-        
-        def safe_paste():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.paste_clipboard()
-        
-        def safe_cut():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.cut_selected()
-        
-        def safe_undo():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.undo()
-        
-        def safe_redo():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.redo()
-        
-        def safe_delete():
-            try:
-                widget = self.root.focus_get()
-                if isinstance(widget, (tk.Entry, tk.Text)):
-                    return
-            except:
-                pass
-            self.delete_selected()
-        
-        # Добавляем пункты меню с акселераторами
-        edit_menu.add_command(label="Copy", command=safe_copy, accelerator="Ctrl+C")
-        edit_menu.add_command(label="Paste", command=safe_paste, accelerator="Ctrl+V")
-        edit_menu.add_command(label="Cut", command=safe_cut, accelerator="Ctrl+X")
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Undo", command=safe_undo, accelerator="Ctrl+Z")
-        edit_menu.add_command(label="Redo", command=safe_redo, accelerator="Ctrl+Y")
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Delete", command=safe_delete, accelerator="Delete")
     
     def setup_ui(self):
         """Создание интерфейса - точная копия HTML макета"""
@@ -462,105 +389,6 @@ class IDEF0App:
             self.set_widget_icon(btn, icon_name, size, compound='left')
             btn.pack(side=tk.LEFT, padx=6)
         
-        # Разделитель перед undo/redo
-        separator = tk.Frame(toolbar_frame, bg=Colors.BORDER, width=1)
-        separator.pack(side=tk.LEFT, padx=6, fill=tk.Y, pady=4)
-        
-        # Кнопки Undo и Redo
-        undo_btn = tk.Button(
-            toolbar_frame,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            padx=6,
-            pady=4,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=self.undo
-        )
-        self.set_widget_icon(undo_btn, "Undo", (20, 20))
-        undo_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(undo_btn)
-        self.undo_btn = undo_btn
-        
-        redo_btn = tk.Button(
-            toolbar_frame,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            padx=6,
-            pady=4,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=self.redo
-        )
-        self.set_widget_icon(redo_btn, "Redo", (20, 20))
-        redo_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(redo_btn)
-        self.redo_btn = redo_btn
-        
-        # Разделитель перед копированием/вставкой
-        separator2 = tk.Frame(toolbar_frame, bg=Colors.BORDER, width=1)
-        separator2.pack(side=tk.LEFT, padx=6, fill=tk.Y, pady=4)
-        
-        # Кнопки копирования, вырезания и вставки
-        cut_btn = tk.Button(
-            toolbar_frame,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            padx=6,
-            pady=4,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=self.cut_selected
-        )
-        self.set_widget_icon(cut_btn, "virez", (20, 20))
-        cut_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(cut_btn)
-        self.cut_btn = cut_btn
-        
-        copy_btn = tk.Button(
-            toolbar_frame,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            padx=6,
-            pady=4,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=self.copy_selected
-        )
-        self.set_widget_icon(copy_btn, "Copy", (20, 20))
-        copy_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(copy_btn)
-        self.copy_btn = copy_btn
-        
-        paste_btn = tk.Button(
-            toolbar_frame,
-            bg=Colors.SURFACE,
-            fg=Colors.TEXT_PRIMARY,
-            relief="flat",
-            bd=0,
-            padx=6,
-            pady=4,
-            activebackground=Colors.ACTIVE,
-            highlightthickness=1,
-            highlightbackground=Colors.BORDER,
-            command=self.paste_clipboard
-        )
-        self.set_widget_icon(paste_btn, "vstavka", (20, 20))
-        paste_btn.pack(side=tk.LEFT, padx=2)
-        self.apply_hover_effect(paste_btn)
-        self.paste_btn = paste_btn
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -616,39 +444,10 @@ class IDEF0App:
         zoom_in_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(zoom_in_btn)
 
-        # Other buttons
-        right_buttons = [
-            ("Обучение", "BookOpen", None),
-            ("Документация", "HelpCircle", self.show_documentation),
-            ("Тесты", None, self.open_test_runner)  # Без иконки, только текст
-        ]
-        for text, icon_name, command in right_buttons:
-            btn = self.create_toolbar_button(right_frame, text)
-            if icon_name:
-                self.set_widget_icon(btn, icon_name, (20,20), compound='left')
-            if command:
-                btn.configure(command=command)
-            
-            # Выделяем кнопку "Тесты" красноватой рамкой
-            if text == "Тесты":
-                btn.configure(
-                    highlightthickness=2,
-                    highlightbackground="#dc3545",  # Красноватый цвет
-                    highlightcolor="#dc3545",
-                    relief="flat"
-                )
-            
-            btn.pack(side=tk.LEFT, padx=6)
-
-        # Отдельная кнопка смены темы
-        self.theme_toggle_btn = self.create_toolbar_button(right_frame, "Тёмная тема")
-        self.theme_toggle_btn.configure(command=self.toggle_theme)
-        self.theme_toggle_btn.pack(side=tk.LEFT, padx=6)
-        self.update_theme_button_label()
-
-        # Кнопка настроек (пока заглушка)
+        # Кнопка настроек
         settings_btn = self.create_toolbar_button(right_frame, "")
         self.set_widget_icon(settings_btn, "Settings", (20,20))
+        settings_btn.configure(command=self.open_settings_menu)
         settings_btn.pack(side=tk.LEFT, padx=6)
         self.settings_btn = settings_btn
 
@@ -709,7 +508,6 @@ class IDEF0App:
             ("Hand", "Перемещать"),
             ("Square", "Добавить блок"),
             ("ArrowRight", "Добавить стрелку"),
-            ("mov", "Переместить"),
             ("Type", "Текст"),
             ("Layers", "Слои"),
             ("ChevronUp", "На передний план"),
@@ -730,13 +528,7 @@ class IDEF0App:
                 highlightbackground=Colors.BORDER,
                 activebackground=Colors.ACTIVE
             )
-            theme_colors = None
-            if icon_name == "mov":
-                theme_colors = {
-                    "light": (0, 0, 0, 255),
-                    "dark": (255, 255, 255, 255)
-                }
-            self.set_widget_icon(btn, icon_name, (26, 26), compound='center', theme_colors=theme_colors)
+            self.set_widget_icon(btn, icon_name, (26, 26), compound='center')
             btn.configure(padx=16, pady=16)
 
             if icon_name == "MousePointer2":
@@ -1249,6 +1041,15 @@ class IDEF0App:
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
+        # Если открыто меню настроек, закрываем его
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    self.close_settings_menu()
+            except:
+                pass
+        
         # Сбрасываем выделение предыдущего блока
         if self.selected_block:
             prev_model = self.selected_block["model"]
@@ -1281,6 +1082,15 @@ class IDEF0App:
 
     def select_arrow(self, arrow_data):
         """Выбирает стрелку и обновляет панель свойств"""
+        # Если открыто меню настроек, закрываем его
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    self.close_settings_menu()
+            except:
+                pass
+        
         # Сбрасываем выделение предыдущей стрелки
         if self.selected_arrow:
             self.deselect_arrow()
@@ -1500,6 +1310,9 @@ class IDEF0App:
         )
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
+        
+        # Плашка с кнопками undo/redo и копирование/вставка в рабочей области
+        self.create_workspace_toolbar(canvas_frame)
 
         # Привязка к событиям клавиатуры
         self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
@@ -1529,6 +1342,355 @@ class IDEF0App:
         
         # Привязываем горячие клавиши после создания canvas
         self.setup_hotkeys()
+
+    def create_workspace_toolbar(self, parent):
+        """Создает плашку с кнопками undo/redo и копирование/вставка в рабочей области"""
+        # Создаем контейнер для плашки
+        toolbar_panel = tk.Frame(
+            parent,
+            bg=Colors.SURFACE,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER
+        )
+        # Размещаем в верхнем левом углу
+        toolbar_panel.place(relx=0, rely=0, x=12, y=12, anchor='nw')
+        
+        # Внутренний фрейм для кнопок
+        buttons_frame = tk.Frame(toolbar_panel, bg=Colors.SURFACE)
+        buttons_frame.pack(padx=4, pady=4)
+        
+        # Кнопка Undo
+        undo_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.undo
+        )
+        self.set_widget_icon(undo_btn, "Undo", (20, 20))
+        undo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(undo_btn)
+        self.undo_btn = undo_btn
+        
+        # Кнопка Redo
+        redo_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.redo
+        )
+        self.set_widget_icon(redo_btn, "Redo", (20, 20))
+        redo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(redo_btn)
+        self.redo_btn = redo_btn
+        
+        # Разделитель
+        separator = tk.Frame(buttons_frame, bg=Colors.BORDER, width=1)
+        separator.pack(side=tk.LEFT, padx=4, fill=tk.Y, pady=2)
+        
+        # Кнопка Вырезать
+        cut_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.cut_selected
+        )
+        self.set_widget_icon(cut_btn, "virez", (20, 20))
+        cut_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(cut_btn)
+        self.cut_btn = cut_btn
+        
+        # Кнопка Копировать
+        copy_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.copy_selected
+        )
+        self.set_widget_icon(copy_btn, "Copy", (20, 20))
+        copy_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(copy_btn)
+        self.copy_btn = copy_btn
+        
+        # Кнопка Вставить
+        paste_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.paste_clipboard
+        )
+        self.set_widget_icon(paste_btn, "vstavka", (20, 20))
+        paste_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(paste_btn)
+        self.paste_btn = paste_btn
+        
+        # Сохраняем ссылку на панель для обновления темы
+        self.workspace_toolbar = toolbar_panel
+        
+        # Обновляем состояние кнопок undo/redo
+        self.update_undo_redo_buttons()
+        
+        # Инициализируем переменную для меню настроек
+        self.settings_menu = None
+
+    def open_settings_menu(self):
+        """Открывает меню настроек вместо панели свойств"""
+        # Если меню уже создано и видимо, закрываем его (переключаем обратно на панель свойств)
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                # Проверяем, видимо ли меню (grid_info возвращает словарь, если виджет размещен через grid)
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    self.close_settings_menu()
+                    return
+            except:
+                pass
+        
+        # Создаем или показываем меню настроек
+        self.create_settings_menu()
+    
+    def create_settings_menu(self):
+        """Создает меню настроек вместо панели свойств"""
+        # Скрываем панель свойств
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel.grid_remove()
+        
+        # Получаем main_frame для размещения меню
+        main_frame = self.main_frame
+        
+        # Создаем контейнер для меню настроек (в том же месте, где панель свойств)
+        if not hasattr(self, 'settings_menu') or not self.settings_menu or not self.settings_menu.winfo_exists():
+            # Внешняя панель с границами, как у sidebar
+            settings_panel = tk.Frame(
+                main_frame,
+                bg=Colors.SURFACE,
+                width=Dimensions.PROPERTIES_WIDTH,
+                highlightthickness=1,
+                highlightbackground=Colors.BORDER,
+                takefocus=False  # Не получает фокус
+            )
+            settings_panel.pack_propagate(False)
+            settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+            
+            # Создаем внутренний контейнер
+            main_content = tk.Frame(
+                settings_panel,
+                bg=Colors.SURFACE,
+                highlightthickness=0,
+                takefocus=False  # Не получает фокус
+            )
+            main_content.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+            
+            self.settings_menu = settings_panel
+            self.settings_main_content = main_content
+        else:
+            # Если меню уже существует, обновляем его цвета и пересоздаем содержимое
+            settings_panel = self.settings_menu
+            # Обновляем цвета панели и границы
+            settings_panel.configure(bg=Colors.SURFACE, highlightbackground=Colors.BORDER)
+            main_content = self.settings_main_content
+            # Обновляем цвета внутреннего контейнера
+            main_content.configure(bg=Colors.SURFACE)
+            # Очищаем содержимое
+            for widget in main_content.winfo_children():
+                widget.destroy()
+            # Удаляем старую кнопку закрытия, если она есть
+            for widget in settings_panel.winfo_children():
+                if isinstance(widget, tk.Button) and widget.winfo_exists():
+                    try:
+                        widget_text = widget.cget("text")
+                        if widget_text == "✕":
+                            widget.destroy()
+                    except:
+                        pass
+        
+        # Кнопка закрытия (крестик) в верхнем правом углу панели
+        close_btn = tk.Button(
+            settings_panel,
+            text="✕",
+            font=("Segoe UI", 16),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_SECONDARY,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            activeforeground=Colors.TEXT_PRIMARY,
+            highlightthickness=0,
+            command=self.close_settings_menu,
+            cursor="hand2"
+        )
+        close_btn.place(relx=1.0, rely=0.0, anchor='ne', x=-8, y=8)
+        self.apply_hover_effect(close_btn)
+        
+        # Создаем содержимое меню в main_content
+        # Основной контейнер для центрирования
+        main_container = tk.Frame(main_content, bg=Colors.SURFACE)
+        main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Заголовок меню
+        header_frame = tk.Frame(main_container, bg=Colors.SURFACE)
+        header_frame.pack(fill=tk.X, padx=16, pady=(16, 12))
+        
+        # Заголовок
+        title_label = tk.Label(
+            header_frame,
+            text="Настройки",
+            font=("Segoe UI", 14, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT)
+        
+        # Контейнер для центрирования кнопок
+        center_container = tk.Frame(main_container, bg=Colors.SURFACE)
+        center_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Контейнер для кнопок (с ограниченной шириной для центрирования)
+        buttons_frame = tk.Frame(center_container, bg=Colors.SURFACE)
+        buttons_frame.pack(expand=True, pady=(0, 16))
+        
+        # Кнопка Обучение
+        learning_btn = tk.Button(
+            buttons_frame,
+            text="Обучение",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.show_learning  # Заглушка, можно добавить функцию позже
+        )
+        self.set_widget_icon(learning_btn, "BookOpen", (20, 20), compound='left')
+        learning_btn.pack(fill=tk.X, pady=(0, 12))
+        self.apply_hover_effect(learning_btn)
+        
+        # Кнопка Документация
+        doc_btn = tk.Button(
+            buttons_frame,
+            text="Документация",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.show_documentation
+        )
+        self.set_widget_icon(doc_btn, "HelpCircle", (20, 20), compound='left')
+        doc_btn.pack(fill=tk.X, pady=(0, 12))
+        self.apply_hover_effect(doc_btn)
+        
+        # Кнопка смены темы
+        self.theme_toggle_btn = tk.Button(
+            buttons_frame,
+            text="Тёмная тема",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.toggle_theme
+        )
+        self.theme_toggle_btn.pack(fill=tk.X)
+        self.apply_hover_effect(self.theme_toggle_btn)
+        self.update_theme_button_label()
+        
+        # Показываем меню
+        settings_panel.grid()
+        
+        # Привязываем ESC для закрытия меню
+        def on_escape(event):
+            self.close_settings_menu()
+        settings_panel.bind("<Escape>", on_escape)
+        # Не устанавливаем фокус на окно настроек, чтобы оно не выделялось
+    
+    def close_settings_menu(self):
+        """Закрывает меню настроек и показывает панель свойств"""
+        # Скрываем меню настроек
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            self.settings_menu.grid_remove()
+        
+        # Показываем панель свойств обратно
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel.grid()
+            
+            # Обновляем панель свойств для текущего выбранного элемента
+            if self.selected_arrow:
+                # Если выбрана стрелка, обновляем панель свойств для стрелки
+                self.properties_panel.update_properties(self.selected_arrow["arrow"])
+            elif self.selected_block:
+                # Если выбран блок, обновляем панель свойств для блока
+                self.properties_panel.update_properties(self.selected_block["model"])
+            else:
+                # Если ничего не выбрано, сбрасываем панель свойств
+                self.properties_panel.update_properties(None)
+    
+    def show_learning(self):
+        """Показывает окно обучения (заглушка)"""
+        # Можно добавить функциональность позже
+        import tkinter.messagebox as messagebox
+        messagebox.showinfo("Обучение", "Функция обучения будет добавлена позже")
 
     # --- Кнопки действий для блока (переместить / копировать / удалить) ---
 
@@ -2400,6 +2562,26 @@ class IDEF0App:
             self.draw_grid()
 
         self.update_theme_button_label()
+        
+        # Пересоздаем меню настроек, если оно открыто, чтобы применить новую тему
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                # Проверяем, видимо ли меню
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    # Удаляем старую кнопку закрытия, если она есть
+                    for widget in self.settings_menu.winfo_children():
+                        if isinstance(widget, tk.Button) and widget.winfo_exists():
+                            try:
+                                widget_text = widget.cget("text")
+                                if widget_text == "✕":
+                                    widget.destroy()
+                            except:
+                                pass
+                    # Пересоздаем меню с новыми цветами темы
+                    self.create_settings_menu()
+            except:
+                pass
 
     def update_theme_button_label(self):
         """Обновляет подпись кнопки переключения темы."""
@@ -3269,7 +3451,9 @@ class IDEF0App:
             if angle > 90 or angle < -90:
                 angle = angle + 180 if angle < 0 else angle - 180
             
-            # Вычисляем противоположный цвет для обводки
+            # Цвет текста зависит от темы, а не от цвета стрелки
+            text_color = Colors.TEXT_PRIMARY
+            # Обводка текста - противоположный цвет от цвета текста темы
             def get_opposite_color(color):
                 """Возвращает противоположный цвет (инвертированный RGB)"""
                 try:
@@ -3287,9 +3471,9 @@ class IDEF0App:
                     return f"#{r:02x}{g:02x}{b:02x}"
                 except:
                     # Если не удалось обработать, возвращаем белый или черный
-                    return "#FFFFFF" if arrow_color != "#FFFFFF" else "#000000"
+                    return "#FFFFFF" if text_color != "#FFFFFF" else "#000000"
             
-            outline_color = get_opposite_color(arrow_color)
+            outline_color = get_opposite_color(text_color)
             
             # Создаем обводку текста (рисуем текст несколько раз со смещением)
             outline_width = 2  # Толщина обводки
@@ -3313,7 +3497,7 @@ class IDEF0App:
                 text_x, text_y,
                 text=arrow.text,
                 font=("Segoe UI", 9, "bold"),
-                fill=arrow_color,
+                fill=text_color,
                 angle=angle,
                 tags=("arrow_text", arrow.id)
             )
@@ -4184,139 +4368,6 @@ class IDEF0App:
         def on_mousewheel(event):
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", on_mousewheel)
-    
-    def open_test_runner(self):
-        """Открывает окно тестирования"""
-        try:
-            # Определяем путь к файлу тестов
-            test_file = None
-            
-            if getattr(sys, 'frozen', False):
-                # Если запущено из exe файла
-                exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-                
-                # Пробуем несколько возможных путей
-                possible_paths = [
-                    # Рядом с exe (если тесты скопированы)
-                    os.path.join(exe_dir, "tests", "run_all_tests.py"),
-                    # В родительской директории (если exe в dist/)
-                    os.path.join(os.path.dirname(exe_dir), "tests", "run_all_tests.py"),
-                    # В исходной директории проекта (IDEF0_editor/tests/)
-                    os.path.join(os.path.dirname(exe_dir), "IDEF0_editor", "tests", "run_all_tests.py"),
-                    # Альтернативный путь (если dist/IDEF0_editor/)
-                    os.path.join(exe_dir, "IDEF0_editor", "tests", "run_all_tests.py"),
-                    # Еще один вариант (если структура другая)
-                    os.path.join(os.path.dirname(os.path.dirname(exe_dir)), "IDEF0_editor", "tests", "run_all_tests.py"),
-                ]
-                
-                # Нормализуем пути и ищем файл
-                for path in possible_paths:
-                    normalized_path = os.path.normpath(path)
-                    if os.path.exists(normalized_path):
-                        test_file = normalized_path
-                        break
-            else:
-                # Если запущено как скрипт
-                app_dir = os.path.dirname(os.path.abspath(__file__))
-                test_file = os.path.join(app_dir, "tests", "run_all_tests.py")
-            
-            # Проверяем существование файла
-            if not test_file or not os.path.exists(test_file):
-                import tkinter.messagebox as messagebox
-                # Пробуем найти файл в других местах
-                search_dirs = []
-                if getattr(sys, 'frozen', False):
-                    exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-                    search_dirs = [
-                        exe_dir,
-                        os.path.dirname(exe_dir),
-                        os.path.dirname(os.path.dirname(exe_dir)),
-                    ]
-                else:
-                    search_dirs = [os.path.dirname(os.path.abspath(__file__))]
-                
-                # Ищем файл рекурсивно (но ограничиваем глубину поиска)
-                found_file = None
-                for search_dir in search_dirs:
-                    if not os.path.exists(search_dir):
-                        continue
-                    try:
-                        for root, dirs, files in os.walk(search_dir):
-                            # Ограничиваем глубину поиска - ищем только в папках tests
-                            if "tests" in root and "run_all_tests.py" in files:
-                                found_file = os.path.join(root, "run_all_tests.py")
-                                break
-                            # Также проверяем текущую директорию
-                            if "run_all_tests.py" in files and os.path.basename(root) == "tests":
-                                found_file = os.path.join(root, "run_all_tests.py")
-                                break
-                        if found_file:
-                            break
-                    except (PermissionError, OSError):
-                        # Пропускаем директории, к которым нет доступа
-                        continue
-                
-                if found_file:
-                    test_file = found_file
-                else:
-                    # Формируем список проверенных путей для сообщения
-                    checked_paths = []
-                    if getattr(sys, 'frozen', False):
-                        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
-                        checked_paths = [
-                            os.path.join(exe_dir, "tests", "run_all_tests.py"),
-                            os.path.join(os.path.dirname(exe_dir), "tests", "run_all_tests.py"),
-                            os.path.join(os.path.dirname(exe_dir), "IDEF0_editor", "tests", "run_all_tests.py"),
-                        ]
-                    else:
-                        checked_paths = [os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "run_all_tests.py")]
-                    
-                    messagebox.showerror(
-                        "Ошибка",
-                        f"Файл тестов не найден.\n\nПроверенные пути:\n" + "\n".join(checked_paths) + 
-                        f"\n\nУбедитесь, что файл tests/run_all_tests.py существует в директории проекта."
-                    )
-                    return
-            
-            # Находим Python интерпретатор
-            python_exe = sys.executable
-            if getattr(sys, 'frozen', False):
-                # Для exe пытаемся найти python в системе
-                import shutil
-                python_path = shutil.which('python')
-                if python_path:
-                    python_exe = python_path
-                else:
-                    # Используем sys.executable, но это может быть сам exe
-                    # В этом случае попробуем запустить через subprocess с python
-                    python_exe = 'python'
-            
-            # Запускаем тестовое приложение в отдельном процессе
-            try:
-                subprocess.Popen(
-                    [python_exe, test_file],
-                    cwd=os.path.dirname(test_file),
-                    creationflags=subprocess.CREATE_NEW_CONSOLE if sys.platform == 'win32' else 0
-                )
-            except FileNotFoundError:
-                import tkinter.messagebox as messagebox
-                messagebox.showerror(
-                    "Ошибка",
-                    f"Не удалось найти Python интерпретатор.\n\nПопробуйте запустить тесты вручную:\n{python_exe} {test_file}"
-                )
-            except Exception as e:
-                import tkinter.messagebox as messagebox
-                messagebox.showerror(
-                    "Ошибка",
-                    f"Не удалось запустить тесты:\n{str(e)}"
-                )
-        except Exception as e:
-            import tkinter.messagebox as messagebox
-            import traceback
-            messagebox.showerror(
-                "Ошибка",
-                f"Ошибка при открытии тестов:\n{str(e)}\n\n{traceback.format_exc()}"
-            )
     
     def run(self):
         """Запуск приложения"""
