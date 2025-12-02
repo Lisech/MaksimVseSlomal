@@ -54,7 +54,7 @@ class IDEF0App:
         self.drag_from_sidebar = False  # флаг перетаскивания из панели
         self.drag_preview = None  # превью перетаскиваемого блока
         self.resizing_block = None  # блок, который сейчас изменяется
-        self.resize_handle_size = 8  # размер маркеров изменения размера
+        self.resize_handle_size = 12  # размер маркеров изменения размера (в 1.5 раза больше, чем было)
         self.resize_preview = None  # превью растягивания
         self.block_action_buttons = []
         self.arrow_action_buttons = []
@@ -129,8 +129,8 @@ class IDEF0App:
             # Общее количество символов = символы на строку * количество строк
             max_chars = chars_per_line * max_lines
             
-            # Ограничения: минимум 15 символов, максимум 300
-            max_chars = max(15, min(300, max_chars))
+            # Ограничения: минимум 15 символов, максимум 80 (как в полях ввода)
+            max_chars = max(15, min(80, max_chars))
         
         # Ограничение по символам с добавлением многоточия при обрезке
         if len(text) > max_chars:
@@ -704,7 +704,7 @@ class IDEF0App:
         # Создаем модель блока
         block_model = Block(
             block_id=block_id,
-            name=f"Блок {code}",
+            name=f"Блок {code}"[:80],  # Ограничиваем имя до 80 символов
             code=code,
             x=x,
             y=y,
@@ -822,7 +822,8 @@ class IDEF0App:
         }
         
         for handle_type, (x, y) in handles_positions.items():
-            handle = self.canvas.create_rectangle(
+            # Используем круглые маркеры (как у стрелок)
+            handle = self.canvas.create_oval(
                 x - size/2, y - size/2,
                 x + size/2, y + size/2,
                 fill=Colors.PRIMARY,
@@ -832,6 +833,9 @@ class IDEF0App:
             )
             block_data["resize_handles"][handle_type] = handle
             
+            # ВАЖНО: Поднимаем маркер наверх, чтобы он был поверх блока
+            self.canvas.tag_raise(handle)
+            
             # Привязываем обработчики событий для маркера
             self.canvas.tag_bind(handle, "<ButtonPress-1>", 
                                lambda e, b=block_data, h=handle_type: self.start_resize(e, b, h))
@@ -839,6 +843,13 @@ class IDEF0App:
                                lambda e, b=block_data, h=handle_type: self.do_resize(e, b, h))
             self.canvas.tag_bind(handle, "<ButtonRelease-1>", 
                                lambda e, b=block_data: self.end_resize(e, b))
+        
+        # ВАЖНО: Поднимаем все маркеры наверх в конце
+        for handle_id in block_data.get("resize_handles", {}).values():
+            try:
+                self.canvas.tag_raise(handle_id)
+            except tk.TclError:
+                pass
 
     def delete_resize_handles(self, block_data):
         """Удаляет маркеры изменения размера"""
@@ -867,6 +878,9 @@ class IDEF0App:
                 fixed_x, fixed_y = right, top
             else:  # se - юго-восток - фиксируем северо-запад
                 fixed_x, fixed_y = left, top
+            
+            # ВАЖНО: Поднимаем блок наверх перед созданием превью, чтобы обводка была видна
+            self._raise_block(block_data)
             
             # Создаем превью для растягивания
             self.resize_preview = self.canvas.create_rectangle(
@@ -994,6 +1008,13 @@ class IDEF0App:
             # Обновляем визуальное представление блока
             self.update_block_visual(block_data)
             
+            # ВАЖНО: Поднимаем все маркеры наверх после изменения размера
+            for handle_id in block_data.get("resize_handles", {}).values():
+                try:
+                    self.canvas.tag_raise(handle_id)
+                except tk.TclError:
+                    pass
+            
             # Обновляем стрелки, соединенные с этим блоком
             self.update_arrows_for_block(block_data["id"])
             
@@ -1030,9 +1051,20 @@ class IDEF0App:
         # Обновляем маркеры изменения размера
         if block_data == self.selected_block:
             self.create_resize_handles(block_data)
+            # ВАЖНО: Убеждаемся, что выбранный блок всегда наверху после любых обновлений
+            self._raise_block(block_data)
+            # Поднимаем все маркеры наверх
+            for handle_id in block_data.get("resize_handles", {}).values():
+                try:
+                    self.canvas.tag_raise(handle_id)
+                except tk.TclError:
+                    pass
         
         # Обновляем стрелки, соединенные с этим блоком
         self.update_arrows_for_block(block_data["id"])
+        
+        # Обновляем точки прикрепления, если они показаны
+        self.update_attachment_points()
 
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
@@ -1080,6 +1112,9 @@ class IDEF0App:
 
                 # Обновляем стрелки, соединенные с этим блоком
                 self.update_arrows_for_block(block_data["id"])
+                
+                # Обновляем точки прикрепления, если они показаны
+                self.update_attachment_points()
 
                 # Обновляем свойства позиции и позицию кнопок действий
                 if self.selected_block == block_data:
@@ -1161,8 +1196,17 @@ class IDEF0App:
         self.selected_block = block_data
         self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
         
+        # ВАЖНО: Поднимаем блок наверх, чтобы обводка выделения была видна
+        self._raise_block(block_data)
+        
         # Создаем маркеры изменения размера
         self.create_resize_handles(block_data)
+        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока
+        for handle_id in block_data.get("resize_handles", {}).values():
+            try:
+                self.canvas.tag_raise(handle_id)
+            except tk.TclError:
+                pass
 
         # Кнопки действий справа от блока
         self.show_block_action_buttons(block_data)
@@ -1260,6 +1304,14 @@ class IDEF0App:
         
         # Обработка блоков
         if isinstance(element, Block):
+            # Ограничиваем все текстовые поля до 80 символов
+            if "name" in update_data and len(update_data["name"]) > 80:
+                update_data["name"] = update_data["name"][:80]
+            if "description" in update_data and len(update_data["description"]) > 80:
+                update_data["description"] = update_data["description"][:80]
+            if "element_type" in update_data and len(update_data["element_type"]) > 80:
+                update_data["element_type"] = update_data["element_type"][:80]
+            
             # Находим визуальное представление блока
             block_data = next((b for b in self.blocks if b["model"] == element), None)
             if block_data:
@@ -1297,7 +1349,9 @@ class IDEF0App:
                 # Обновляем визуальное представление
                 if "name" in update_data:
                     model = block_data["model"]
-                    formatted_text = self.format_block_text(update_data["name"], model.width)
+                    # Ограничиваем имя до 80 символов
+                    name_text = update_data["name"][:80] if len(update_data["name"]) > 80 else update_data["name"]
+                    formatted_text = self.format_block_text(name_text, model.width)
                     self.canvas.itemconfig(block_data["text_id"], 
                                          text=formatted_text,
                                          width=model.width - 10)
@@ -1315,6 +1369,8 @@ class IDEF0App:
                 if self.selected_block == block_data:
                     # Устанавливаем выделенную обводку для выбранного элемента
                     self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=element.border_width)
+                    # ВАЖНО: Поднимаем выбранный блок наверх, чтобы обводка выделения была видна
+                    self._raise_block(block_data)
                     # Обновляем маркеры изменения размера
                     self.create_resize_handles(block_data)
                 
@@ -1325,6 +1381,10 @@ class IDEF0App:
         
         # Обработка стрелок
         elif isinstance(element, Arrow):
+            # Ограничиваем текст стрелки до 80 символов
+            if "text" in update_data and len(update_data["text"]) > 80:
+                update_data["text"] = update_data["text"][:80]
+            
             # Находим визуальное представление стрелки
             arrow_data = next((a for a in self.arrows if a["arrow"] == element), None)
             if arrow_data:
@@ -2250,7 +2310,6 @@ class IDEF0App:
         spacing = 32
         
         buttons_spec = [
-            ("move", "Переместить", "Moved"),
             ("copy", "Копировать", "Copy"),
             ("delete", "Удалить", "Close"),
         ]
@@ -2272,10 +2331,7 @@ class IDEF0App:
             )
             self.set_widget_icon(btn, icon_name, (24, 24), compound="center", force_original=True)
             
-            if action == "move":
-                # Создание/удаление среднего хитбокса для изгиба стрелки
-                btn.configure(command=lambda a=arrow_data: self.toggle_arrow_bend_handle(a))
-            elif action == "copy":
+            if action == "copy":
                 btn.configure(command=lambda a=arrow_data: self.copy_arrow(a))
             elif action == "delete":
                 btn.configure(command=lambda a=arrow_data: self.delete_arrow_direct(a))
@@ -2366,7 +2422,7 @@ class IDEF0App:
         if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
             return
         
-        handle_size = 8
+        handle_size = 12  # Размер маркеров стрелок (в 1.5 раза больше, чем было)
         
         # Маркер на начале стрелки
         handle_start = self.canvas.create_oval(
@@ -2394,25 +2450,9 @@ class IDEF0App:
             "bend": None  # Средний хитбокс для изгиба
         }
         
-        # Если у стрелки уже есть точка изгиба, создаем средний хитбокс
-        if arrow.bend_x is not None and arrow.bend_y is not None:
-            handle_bend = self.canvas.create_oval(
-                arrow.bend_x - handle_size, arrow.bend_y - handle_size,
-                arrow.bend_x + handle_size, arrow.bend_y + handle_size,
-                fill=Colors.PRIMARY,
-                outline=Colors.SURFACE,
-                width=1,
-                tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
-            )
-            self.arrow_drag_handles[arrow.id]["bend"] = handle_bend
-            
-            # Привязываем обработчики для перетаскивания среднего хитбокса
-            self.canvas.tag_bind(handle_bend, "<ButtonPress-1>", 
-                               lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<B1-Motion>", 
-                               lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>", 
-                               lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
+        # ВАЖНО: Поднимаем маркеры наверх, чтобы они были поверх стрелки и блоков
+        self.canvas.tag_raise(handle_start)
+        self.canvas.tag_raise(handle_end)
         
         # Привязываем обработчики для перетаскивания
         self.canvas.tag_bind(handle_start, "<ButtonPress-1>", 
@@ -2458,7 +2498,7 @@ class IDEF0App:
             return
         
         handles = self.arrow_drag_handles[arrow_id]
-        handle_size = 8
+        handle_size = 12  # Размер маркеров стрелок (в 1.5 раза больше, чем было)
         
         try:
             self.canvas.coords(handles["start"],
@@ -2467,114 +2507,8 @@ class IDEF0App:
             self.canvas.coords(handles["end"],
                              arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
                              arrow.display_x2 + handle_size, arrow.display_y2 + handle_size)
-            # Обновляем средний хитбокс, если он существует
-            if handles.get("bend") and arrow.bend_x is not None and arrow.bend_y is not None:
-                self.canvas.coords(handles["bend"],
-                                 arrow.bend_x - handle_size, arrow.bend_y - handle_size,
-                                 arrow.bend_x + handle_size, arrow.bend_y + handle_size)
         except tk.TclError:
             pass
-    
-    def toggle_arrow_bend_handle(self, arrow_data):
-        """Создает или удаляет средний хитбокс для изгиба стрелки"""
-        arrow = arrow_data["arrow"]
-        arrow_id = arrow.id
-        
-        if arrow_id not in self.arrow_drag_handles:
-            return
-        
-        handles = self.arrow_drag_handles[arrow_id]
-        
-        if handles.get("bend"):
-            # Удаляем средний хитбокс и убираем изгиб
-            try:
-                self.canvas.delete(handles["bend"])
-            except tk.TclError:
-                pass
-            handles["bend"] = None
-            arrow.bend_x = None
-            arrow.bend_y = None
-            # Перерисовываем стрелку как прямую
-            self.draw_arrow(arrow_data)
-            self.update_arrow_drag_handles(arrow_data)
-        else:
-            # Создаем средний хитбокс
-            if arrow.display_x1 is None or arrow.display_y1 is None or arrow.display_x2 is None or arrow.display_y2 is None:
-                return
-            
-            # Инициализируем точку изгиба в середине стрелки, если её еще нет
-            if arrow.bend_x is None or arrow.bend_y is None:
-                arrow.bend_x = (arrow.display_x1 + arrow.display_x2) / 2
-                arrow.bend_y = (arrow.display_y1 + arrow.display_y2) / 2
-            
-            handle_size = 8
-            handle_bend = self.canvas.create_oval(
-                arrow.bend_x - handle_size, arrow.bend_y - handle_size,
-                arrow.bend_x + handle_size, arrow.bend_y + handle_size,
-                fill=Colors.PRIMARY,
-                outline=Colors.SURFACE,
-                width=1,
-                tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
-            )
-            
-            handles["bend"] = handle_bend
-            
-            # Привязываем обработчики для перетаскивания
-            self.canvas.tag_bind(handle_bend, "<ButtonPress-1>", 
-                               lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<B1-Motion>", 
-                               lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>", 
-                               lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
-            
-            # Перерисовываем стрелку с изгибом
-            self.draw_arrow(arrow_data)
-    
-    def start_arrow_bend_drag(self, event, arrow_data):
-        """Начало перетаскивания точки изгиба стрелки"""
-        if self.current_mode != "select":
-            return
-        arrow = arrow_data["arrow"]
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
-        
-        arrow_data["bend_drag_data"] = {
-            "start_x": x,
-            "start_y": y,
-            "orig_x": arrow.bend_x,
-            "orig_y": arrow.bend_y
-        }
-        return "break"
-    
-    def do_arrow_bend_drag(self, event, arrow_data):
-        """Перетаскивание точки изгиба стрелки"""
-        if "bend_drag_data" not in arrow_data:
-            return
-        arrow = arrow_data["arrow"]
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
-        
-        dx = x - arrow_data["bend_drag_data"]["start_x"]
-        dy = y - arrow_data["bend_drag_data"]["start_y"]
-        
-        arrow.bend_x = arrow_data["bend_drag_data"]["orig_x"] + dx
-        arrow.bend_y = arrow_data["bend_drag_data"]["orig_y"] + dy
-        
-        # Перерисовываем стрелку
-        self.draw_arrow(arrow_data)
-        # Обновляем маркеры
-        self.update_arrow_drag_handles(arrow_data)
-        self.update_arrow_action_buttons_position(arrow_data)
-        
-        return "break"
-    
-    def end_arrow_bend_drag(self, event, arrow_data):
-        """Завершение перетаскивания точки изгиба стрелки"""
-        if "bend_drag_data" in arrow_data:
-            del arrow_data["bend_drag_data"]
-            
-            # Сохраняем состояние для undo
-            self.save_state()
     
     def start_arrow_drag(self, event, arrow_data, end_type):
         """Начало перетаскивания конца стрелки."""
@@ -2585,28 +2519,53 @@ class IDEF0App:
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
         
-        # Показываем точки прикрепления
+        # ВАЖНО: Сразу открепляем стрелку при начале перетаскивания, если она была прикреплена
+        # Это позволяет открепить и двигать стрелку в одно действие
         if end_type == "start":
+            # Сохраняем текущие координаты перед откреплением
+            if arrow.display_x1 is not None and arrow.display_y1 is not None:
+                arrow.x1 = arrow.display_x1
+                arrow.y1 = arrow.display_y1
+            
+            # Открепляем от блока, если был прикреплен
+            if arrow.from_block_id:
+                arrow.disconnect_from_block(arrow.from_block_id)
+            
+            # Показываем точки прикрепления для возможности прикрепления к другому блоку
             exclude_block_id = arrow.to_block_id  # Исключаем конечный блок
             self.show_attachment_points(exclude_block_id)
+            
+            arrow_data["drag_data"] = {
+                "start_x": x,
+                "start_y": y,
+                "orig_x": arrow.display_x1 if arrow.display_x1 is not None else x,
+                "orig_y": arrow.display_y1 if arrow.display_y1 is not None else y
+            }
         else:
+            # Сохраняем текущие координаты перед откреплением
+            if arrow.display_x2 is not None and arrow.display_y2 is not None:
+                arrow.x2 = arrow.display_x2
+                arrow.y2 = arrow.display_y2
+            
+            # Открепляем от блока, если был прикреплен
+            if arrow.to_block_id:
+                arrow.disconnect_from_block(arrow.to_block_id)
+            
+            # Показываем точки прикрепления для возможности прикрепления к другому блоку
             exclude_block_id = arrow.from_block_id  # Исключаем начальный блок
             self.show_attachment_points(exclude_block_id)
+            
+            arrow_data["drag_data"] = {
+                "start_x": x,
+                "start_y": y,
+                "orig_x": arrow.display_x2 if arrow.display_x2 is not None else x,
+                "orig_y": arrow.display_y2 if arrow.display_y2 is not None else y
+            }
         
-        if end_type == "start":
-            arrow_data["drag_data"] = {
-                "start_x": x,
-                "start_y": y,
-                "orig_x": arrow.display_x1,
-                "orig_y": arrow.display_y1
-            }
-        else:
-            arrow_data["drag_data"] = {
-                "start_x": x,
-                "start_y": y,
-                "orig_x": arrow.display_x2,
-                "orig_y": arrow.display_y2
-            }
+        # Перерисовываем стрелку после открепления
+        self.draw_arrow(arrow_data)
+        self.update_arrow_drag_handles(arrow_data)
+        
         return "break"
     
     def do_arrow_drag(self, event, arrow_data, end_type):
@@ -2682,35 +2641,48 @@ class IDEF0App:
         y = self.canvas.canvasy(event.y)
         
         # Проверяем, можно ли прикрепить к точке прикрепления
+        # Используем меньший радиус для более точного прикрепления
+        attachment_threshold = 15  # Расстояние для прикрепления (меньше размера маркера)
+        
         if self.dragging_arrow_end == "start":
-            # Отключаем от текущего блока, если был прикреплен
-            if arrow.from_block_id:
-                arrow.disconnect_from_block(arrow.from_block_id)
-            
-            # Ищем ближайшую точку прикрепления
+            # Стрелка уже откреплена в start_arrow_drag, просто ищем точку прикрепления
             nearest = self.find_nearest_attachment_point(x, y)
+            # Проверяем расстояние до точки прикрепления
             if nearest:
                 block_id, side, point_index, point_x, point_y = nearest
-                arrow.connect_to_block(block_id, side, is_start=True, attachment_point=point_index)
-                arrow.display_x1 = point_x
-                arrow.display_y1 = point_y
+                distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
+                # Прикрепляем только если достаточно близко к точке прикрепления
+                if distance <= attachment_threshold:
+                    arrow.connect_to_block(block_id, side, is_start=True, attachment_point=point_index)
+                    arrow.display_x1 = point_x
+                    arrow.display_y1 = point_y
+                else:
+                    # Сохраняем текущие координаты как свободные (открепляем)
+                    if arrow.display_x1 is not None and arrow.display_y1 is not None:
+                        arrow.x1 = arrow.display_x1
+                        arrow.y1 = arrow.display_y1
             else:
                 # Сохраняем текущие координаты как свободные
                 if arrow.display_x1 is not None and arrow.display_y1 is not None:
                     arrow.x1 = arrow.display_x1
                     arrow.y1 = arrow.display_y1
         elif self.dragging_arrow_end == "end":
-            # Отключаем от текущего блока, если был прикреплен
-            if arrow.to_block_id:
-                arrow.disconnect_from_block(arrow.to_block_id)
-            
-            # Ищем ближайшую точку прикрепления
+            # Стрелка уже откреплена в start_arrow_drag, просто ищем точку прикрепления
             nearest = self.find_nearest_attachment_point(x, y)
+            # Проверяем расстояние до точки прикрепления
             if nearest:
                 block_id, side, point_index, point_x, point_y = nearest
-                arrow.connect_to_block(block_id, side, is_start=False, attachment_point=point_index)
-                arrow.display_x2 = point_x
-                arrow.display_y2 = point_y
+                distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
+                # Прикрепляем только если достаточно близко к точке прикрепления
+                if distance <= attachment_threshold:
+                    arrow.connect_to_block(block_id, side, is_start=False, attachment_point=point_index)
+                    arrow.display_x2 = point_x
+                    arrow.display_y2 = point_y
+                else:
+                    # Сохраняем текущие координаты как свободные (открепляем)
+                    if arrow.display_x2 is not None and arrow.display_y2 is not None:
+                        arrow.x2 = arrow.display_x2
+                        arrow.y2 = arrow.display_y2
             else:
                 # Сохраняем текущие координаты как свободные
                 if arrow.display_x2 is not None and arrow.display_y2 is not None:
@@ -2722,6 +2694,16 @@ class IDEF0App:
         
         # Перерисовываем стрелку
         self.draw_arrow(arrow_data)
+        
+        # ВАЖНО: Поднимаем маркеры наверх после отрисовки
+        if arrow.id in self.arrow_drag_handles:
+            handles = self.arrow_drag_handles[arrow.id]
+            if handles.get("start"):
+                self.canvas.tag_raise(handles["start"])
+            if handles.get("end"):
+                self.canvas.tag_raise(handles["end"])
+        
+        # Обновляем маркеры (позиции)
         self.update_arrow_drag_handles(arrow_data)
         self.update_arrow_action_buttons_position(arrow_data)
         
@@ -2781,6 +2763,53 @@ class IDEF0App:
                         )
                     
                     self.attachment_points.append(point_id)
+    
+    def update_attachment_points(self):
+        """Обновляет позиции всех видимых точек прикрепления"""
+        if not hasattr(self, "attachment_points") or not self.attachment_points:
+            return
+        
+        if not hasattr(self, "canvas"):
+            return
+        
+        # Получаем все теги точек прикрепления для обновления
+        attachment_data = {}  # {point_id: (block_id, side, point_index, is_image)}
+        
+        for point_id in self.attachment_points:
+            try:
+                tags = self.canvas.gettags(point_id)
+                if len(tags) >= 4:
+                    block_id = tags[1]
+                    side = tags[2]
+                    point_index = int(tags[3])
+                    # Определяем, является ли элемент изображением или овалом
+                    item_type = self.canvas.type(point_id)
+                    is_image = (item_type == "image")
+                    attachment_data[point_id] = (block_id, side, point_index, is_image)
+            except (tk.TclError, ValueError, IndexError):
+                continue
+        
+        # Обновляем координаты каждой точки
+        for point_id, (block_id, side, point_index, is_image) in attachment_data.items():
+            # Находим блок
+            block_data = next((b for b in self.blocks if b["id"] == block_id), None)
+            if not block_data:
+                continue
+            
+            block = block_data["model"]
+            points = block.get_attachment_points(side)
+            
+            if point_index < len(points):
+                px, py = points[point_index]
+                try:
+                    if is_image:
+                        self.canvas.coords(point_id, px, py)
+                    else:
+                        # Для овала нужно 4 координаты (x1, y1, x2, y2)
+                        size = self.attachment_point_size / 2
+                        self.canvas.coords(point_id, px - size, py - size, px + size, py + size)
+                except tk.TclError:
+                    pass
     
     def hide_attachment_points(self):
         """Скрывает все точки прикрепления"""
@@ -4140,6 +4169,89 @@ class IDEF0App:
         
         return missing_codes
     
+    def _format_missing_codes(self, codes):
+        """Форматирует список недостающих кодов, группируя их в диапазоны при большом количестве"""
+        if not codes:
+            return ""
+        
+        if len(codes) <= 4:
+            # Если кодов 4 или меньше, просто перечисляем их
+            if len(codes) == 1:
+                return codes[0]
+            else:
+                return ", ".join(codes)
+        
+        # Если кодов больше 4, группируем в диапазоны
+        # Разделяем коды по префиксам (A1, A1.1, A1.2 и т.д.)
+        codes_by_prefix = {}
+        for code in codes:
+            # Определяем префикс (A, A1, A1.1 и т.д.)
+            if "." in code:
+                parts = code.split(".")
+                prefix = ".".join(parts[:-1])  # Все части кроме последней
+                num = parts[-1]
+            else:
+                prefix = code[0]  # "A"
+                num = code[1:]
+            
+            if prefix not in codes_by_prefix:
+                codes_by_prefix[prefix] = []
+            
+            try:
+                codes_by_prefix[prefix].append((int(num), code))
+            except ValueError:
+                # Если не число, просто добавляем как есть
+                codes_by_prefix[prefix].append((999999, code))
+        
+        # Форматируем каждый префикс отдельно
+        result_parts = []
+        for prefix, code_list in codes_by_prefix.items():
+            # Сортируем по номеру
+            code_list.sort(key=lambda x: x[0])
+            numbers = [x[0] for x in code_list]
+            
+            # Группируем последовательные числа в диапазоны
+            ranges = []
+            start = numbers[0]
+            end = numbers[0]
+            
+            for i in range(1, len(numbers)):
+                if numbers[i] == end + 1:
+                    end = numbers[i]
+                else:
+                    if start == end:
+                        ranges.append((start, start))
+                    else:
+                        ranges.append((start, end))
+                    start = numbers[i]
+                    end = numbers[i]
+            
+            # Добавляем последний диапазон
+            if start == end:
+                ranges.append((start, start))
+            else:
+                ranges.append((start, end))
+            
+            # Формируем строку для этого префикса
+            prefix_parts = []
+            for start_num, end_num in ranges:
+                if start_num == end_num:
+                    # Одиночный код
+                    if prefix == "A":
+                        prefix_parts.append(f"A{start_num}")
+                    else:
+                        prefix_parts.append(f"{prefix}.{start_num}")
+                else:
+                    # Диапазон
+                    if prefix == "A":
+                        prefix_parts.append(f"A{start_num}-A{end_num}")
+                    else:
+                        prefix_parts.append(f"{prefix}.{start_num}-{prefix}.{end_num}")
+            
+            result_parts.extend(prefix_parts)
+        
+        return ", ".join(result_parts)
+    
     def _show_error_tooltip(self, event):
         """Показывает tooltip с информацией об ошибке"""
         if not hasattr(self, 'missing_codes') or not self.missing_codes:
@@ -4256,55 +4368,82 @@ class IDEF0App:
         # Используем цвет стрелки (если он не установлен, используем цвет из темы)
         arrow_color = arrow.color if arrow.color and arrow.color != Colors.ARROW_COLOR else Colors.ARROW_COLOR
         
-        # Проверяем, есть ли точка изгиба
-        if arrow.bend_x is not None and arrow.bend_y is not None:
-            # Рисуем изогнутую стрелку (ломаную линию с тремя точками, резкие углы)
+        # Рисуем стрелку с сглаживанием для устранения "лесенки"
+        # Всегда рисуем прямую стрелку - добавляем промежуточные точки для сглаживания
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.sqrt(dx * dx + dy * dy)
+            
+        # Если стрелка достаточно длинная, добавляем промежуточные точки
+        if length > 10:
+            # Добавляем несколько промежуточных точек для плавности
+            num_points = max(3, int(length / 20))  # Одна точка на каждые 20 пикселей
+            points = []
+            for i in range(num_points + 1):
+                t = i / num_points
+                px = x1 + dx * t
+                py = y1 + dy * t
+                points.extend([px, py])
+            
             line_id = self.canvas.create_line(
-                x1, y1, arrow.bend_x, arrow.bend_y, x2, y2,
+                *points,
                 fill=arrow_color,
                 width=line_width,
                 dash=dash,
-                smooth=False,  # Резкие углы без сглаживания
+                capstyle="round",  # Круглые концы для плавности
+                joinstyle="round",  # Круглые соединения
+                smooth=True,  # Включаем сглаживание для плавной линии
                 tags=("arrow_line", arrow.id)
             )
-            arrow_data["line_id"] = line_id
-            
-            # Создаем невидимую широкую линию для увеличения хитбокса (для удобного захвата)
-            hitbox_width = 20  # Ширина области клика
-            # Используем пустой fill для полной прозрачности
-            hitbox_id = self.canvas.create_line(
-                x1, y1, arrow.bend_x, arrow.bend_y, x2, y2,
-                fill="",  # Прозрачный цвет
-                width=hitbox_width,
-                dash=dash,
-                smooth=False,  # Резкие углы без сглаживания
-                tags=("arrow_line", "arrow_hitbox", arrow.id),
-                state="normal"  # Убеждаемся, что линия активна для клика
-            )
-            arrow_data["hitbox_id"] = hitbox_id
         else:
-            # Рисуем прямую стрелку
+            # Для коротких стрелок используем простую линию
             line_id = self.canvas.create_line(
                 x1, y1, x2, y2,
                 fill=arrow_color,
                 width=line_width,
                 dash=dash,
+                capstyle="round",  # Круглые концы для плавности
+                joinstyle="round",  # Круглые соединения
                 tags=("arrow_line", arrow.id)
             )
-            arrow_data["line_id"] = line_id
+        arrow_data["line_id"] = line_id
+        
+        # Создаем невидимую широкую линию для увеличения хитбокса (для удобного захвата)
+        hitbox_width = 20  # Ширина области клика
+        # Используем пустой fill для полной прозрачности
+        if length > 10:
+            # Используем те же промежуточные точки для хитбокса
+            num_points = max(3, int(length / 20))
+            points = []
+            for i in range(num_points + 1):
+                t = i / num_points
+                px = x1 + dx * t
+                py = y1 + dy * t
+                points.extend([px, py])
             
-            # Создаем невидимую широкую линию для увеличения хитбокса (для удобного захвата)
-            hitbox_width = 20  # Ширина области клика
-            # Используем пустой fill для полной прозрачности
+            hitbox_id = self.canvas.create_line(
+                *points,
+                fill="",  # Прозрачный цвет
+                width=hitbox_width,
+                dash=dash,
+                capstyle="round",
+                joinstyle="round",
+                smooth=True,
+                tags=("arrow_line", "arrow_hitbox", arrow.id),
+                state="normal"  # Убеждаемся, что линия активна для клика
+            )
+        else:
             hitbox_id = self.canvas.create_line(
                 x1, y1, x2, y2,
                 fill="",  # Прозрачный цвет
                 width=hitbox_width,
                 dash=dash,
+                capstyle="round",
+                joinstyle="round",
                 tags=("arrow_line", "arrow_hitbox", arrow.id),
                 state="normal"  # Убеждаемся, что линия активна для клика
             )
-            arrow_data["hitbox_id"] = hitbox_id
+        arrow_data["hitbox_id"] = hitbox_id
         
         # Удаляем старый наконечник, если существует
         if arrow_data.get("arrowhead_id"):
@@ -4314,11 +4453,7 @@ class IDEF0App:
                 pass  # Элемент уже удален
         
         # Рисуем наконечник стрелки
-        # Если есть изгиб, наконечник должен быть направлен от точки изгиба к концу
-        if arrow.bend_x is not None and arrow.bend_y is not None:
-            arrowhead_id = self.create_arrowhead(arrow.bend_x, arrow.bend_y, x2, y2, arrow_color, arrow.width)
-        else:
-            arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow_color, arrow.width)
+        arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow_color, arrow.width)
         arrow_data["arrowhead_id"] = arrowhead_id
         
         # Сохраняем ID для обновления
@@ -4350,20 +4485,12 @@ class IDEF0App:
         # Рисуем текст на стрелке, если он есть
         if arrow.text and arrow.text.strip():
             # Вычисляем вектор направления стрелки
-            if arrow.bend_x is not None and arrow.bend_y is not None:
-                # Для изогнутой стрелки - используем последний сегмент (от изгиба к концу)
-                dx = x2 - arrow.bend_x
-                dy = y2 - arrow.bend_y
-                # Позиция текста - середина последнего сегмента
-                base_x = (arrow.bend_x + x2) / 2
-                base_y = (arrow.bend_y + y2) / 2
-            else:
-                # Для прямой стрелки
-                dx = x2 - x1
-                dy = y2 - y1
-                # Позиция текста - середина линии
-                base_x = (x1 + x2) / 2
-                base_y = (y1 + y2) / 2
+            # Для прямой стрелки
+            dx = x2 - x1
+            dy = y2 - y1
+            # Позиция текста - середина линии
+            base_x = (x1 + x2) / 2
+            base_y = (y1 + y2) / 2
             
             # Вычисляем длину вектора направления
             length = math.sqrt(dx * dx + dy * dy)
