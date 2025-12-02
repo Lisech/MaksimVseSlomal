@@ -237,39 +237,13 @@ class PropertiesPanel(tk.Frame):
         colors_frame.pack(fill=tk.X, padx=14, pady=(5, 0))
 
         arrow_colors = [
-<<<<<<< Updated upstream
-            ("#000000", "black"),
-            ("#2d7ef7", "blue"),
-            ("#ff0000", "red"),
-            ("#00aa00", "green"),
-            ("#ff8800", "orange"),
-            ("#8800ff", "purple"),
-            ("#666666", "gray")
-=======
             ("#cfe8ff", "blue"),
             ("#d9f4d0", "green"),
             ("#fff5c2", "yellow"),
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
             ("#000000", "black"),
-=======
-            ("#ffffff", "white"),
->>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
-=======
-            ("#ffffff", "white"),
->>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
-=======
-            ("#ffffff", "white"),
->>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
-=======
-            ("#ffffff", "white"),
->>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
             ("#E3F2FD", "light_blue"),  # текущий цвет по умолчанию
             ("#ffd6cc", "orange"),
             ("#e6ccff", "purple")
->>>>>>> Stashed changes
         ]
 
         self.arrow_color_swatches = {}
@@ -755,7 +729,7 @@ class PropertiesPanel(tk.Frame):
                 self.fields["arrow_style"].insert(0, arrow_data.get("style", "solid"))
             
             # Подсвечиваем выбранный цвет стрелки
-            current_color = arrow_data.get("color", "#000000")
+            current_color = arrow_data.get("color", "#E3F2FD")
             if hasattr(self, 'arrow_color_swatches'):
                 for color, swatch in self.arrow_color_swatches.items():
                     if color == current_color:
