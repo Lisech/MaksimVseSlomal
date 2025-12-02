@@ -652,14 +652,54 @@ class IDEF0App:
             # Находим родительский блок для наследования кода
             parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id), None)
             if parent_block:
-                # Считаем сколько уже есть блоков на этом уровне с тем же родителем
+                # Получаем все блоки на этом уровне с тем же родителем и находим первый свободный номер
                 sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
-                code = f"{parent_block.code}.{len(sibling_blocks) + 1}"
+                used_numbers = set()
+                for block_data in sibling_blocks:
+                    code_parts = block_data["model"].code.split(".")
+                    if len(code_parts) > 1:
+                        try:
+                            num = int(code_parts[-1])
+                            used_numbers.add(num)
+                        except ValueError:
+                            pass
+                # Находим первый свободный номер
+                code_num = 1
+                while code_num in used_numbers:
+                    code_num += 1
+                code = f"{parent_block.code}.{code_num}"
             else:
-                code = f"A{len(current_blocks) + 1}"
+                # Находим первый свободный номер на корневом уровне
+                used_numbers = set()
+                for block_data in current_blocks:
+                    code = block_data.code
+                    if code.startswith("A") and "." not in code:
+                        try:
+                            num = int(code[1:])
+                            used_numbers.add(num)
+                        except ValueError:
+                            pass
+                # Находим первый свободный номер
+                code_num = 1
+                while code_num in used_numbers:
+                    code_num += 1
+                code = f"A{code_num}"
         else:
-            # Корневой уровень
-            code = f"A{len(current_blocks) + 1}"
+            # Корневой уровень - находим первый свободный номер
+            used_numbers = set()
+            for block_data in current_blocks:
+                code = block_data.code
+                if code.startswith("A") and "." not in code:
+                    try:
+                        num = int(code[1:])
+                        used_numbers.add(num)
+                    except ValueError:
+                        pass
+            # Находим первый свободный номер
+            code_num = 1
+            while code_num in used_numbers:
+                code_num += 1
+            code = f"A{code_num}"
 
         # Создаем модель блока
         block_model = Block(
@@ -714,6 +754,9 @@ class IDEF0App:
         # (новый блок всегда должен быть виден, так как он создается на текущем уровне)
         # Автоматически выбираем новый блок
         self.select_block(block_data)
+        
+        # Проверяем ошибки нумерации после создания блока
+        self.root.after(100, self.check_numbering_errors)
 
         # Сохраняем состояние для undo
         self.save_state()
@@ -1220,6 +1263,37 @@ class IDEF0App:
             # Находим визуальное представление блока
             block_data = next((b for b in self.blocks if b["model"] == element), None)
             if block_data:
+                # Обработка изменения кода
+                if "code" in update_data:
+                    old_code = element.code
+                    new_code = update_data["code"]
+                    
+                    # Проверяем, не конфликтует ли новый код с существующим блоком
+                    conflicting_block = next(
+                        (b for b in self.blocks 
+                         if b["model"].code == new_code and b["model"].id != element.id 
+                         and b["model"].parent_id == element.parent_id),
+                        None
+                    )
+                    
+                    if conflicting_block:
+                        # Сдвигаем конфликтующий блок и всех его детей
+                        self._shift_block_and_children(conflicting_block)
+                    
+                    # Обновляем код блока
+                    element.code = new_code
+                    element.name = f"Блок {new_code}"
+                    
+                    # Обновляем все дочерние блоки рекурсивно
+                    self._update_children_codes_recursive(block_data, old_code, new_code)
+                    
+                    # Обновляем текст на canvas
+                    model = block_data["model"]
+                    formatted_text = self.format_block_text(element.name, model.width)
+                    self.canvas.itemconfig(block_data["text_id"], 
+                                         text=formatted_text,
+                                         width=model.width - 10)
+                
                 # Обновляем визуальное представление
                 if "name" in update_data:
                     model = block_data["model"]
@@ -1245,6 +1319,9 @@ class IDEF0App:
                     self.create_resize_handles(block_data)
                 
                 print(f"Обновлен блок {block_data['id']}: {update_data}")
+                
+                # Проверяем ошибки нумерации после изменения свойств
+                self.check_numbering_errors()
         
         # Обработка стрелок
         elif isinstance(element, Arrow):
@@ -1370,8 +1447,45 @@ class IDEF0App:
         )
         self.footer_right_label.place(relx=1, rely=1, x=-14, y=-10, anchor='se')
         
+        # Плашка с ошибкой (круг с восклицательным знаком) в нижнем правом углу
+        # Создаем Canvas для круга
+        self.error_indicator_canvas = tk.Canvas(
+            canvas_frame,
+            width=24,
+            height=24,
+            bg=Colors.SURFACE,
+            highlightthickness=0,
+            cursor="hand2"
+        )
+        self.error_indicator_canvas.place(relx=1, rely=1, x=-40, y=-30, anchor='se')
+        self.error_indicator_canvas.place_forget()  # Скрываем по умолчанию
+        
+        # Рисуем круг с тускло красным фоном
+        self.error_circle_id = self.error_indicator_canvas.create_oval(
+            2, 2, 22, 22,
+            fill="#ffcccc",  # Тускло красный
+            outline="#ff9999",
+            width=1
+        )
+        
+        # Рисуем ярко красный восклицательный знак
+        self.error_exclamation_id = self.error_indicator_canvas.create_text(
+            12, 12,
+            text="!",
+            font=("Segoe UI", 14, "bold"),
+            fill="#ff0000",  # Ярко красный
+            anchor="center"
+        )
+        
+        # Tooltip для плашки ошибки
+        self.error_tooltip = None
+        self.error_indicator_canvas.bind("<Enter>", self._show_error_tooltip)
+        self.error_indicator_canvas.bind("<Leave>", self._hide_error_tooltip)
+        
         # Обновляем footer после создания
         self.root.after(100, self.update_footer_info)
+        # Проверяем ошибки после создания
+        self.root.after(200, self.check_numbering_errors)
         
         # Плашка с кнопками undo/redo и копирование/вставка в рабочей области
         self.create_workspace_toolbar(canvas_frame)
@@ -1914,11 +2028,21 @@ class IDEF0App:
         """Удаление конкретного блока по кнопке (не затрагивает выбранную стрелку)."""
         if block_data not in self.blocks:
             return
+        
+        # Сохраняем информацию о блоке для перенумерации
+        deleted_block = block_data["model"]
+        deleted_parent_id = deleted_block.parent_id
+        deleted_code = deleted_block.code
+        
         # Если этот блок выбран — обновим состояние
         if self.selected_block == block_data:
             self.selected_block = None
             self.properties_panel.update_properties(None)
             self.hide_block_action_buttons()
+        
+        # Удаляем все дочерние блоки рекурсивно
+        self._delete_block_children(block_data["id"])
+        
         # Удаляем стрелки, соединенные с этим блоком
         block_id = block_data["id"]
         arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
@@ -1937,6 +2061,9 @@ class IDEF0App:
         
         # Удаляем блок из списка
         self.blocks.remove(block_data)
+        
+        # Перенумеровываем оставшиеся блоки на том же уровне
+        self._renumber_blocks_after_deletion(deleted_parent_id, deleted_code)
     
     def delete_block(self, block_data):
         """Удаление блока (сохраняет состояние для undo/redo)"""
@@ -1945,6 +2072,163 @@ class IDEF0App:
         # Сохраняем состояние перед удалением для undo/redo
         self.save_state()
         self.delete_block_direct(block_data)
+        
+        # Обновляем canvas для текущего уровня
+        self.refresh_canvas()
+        
+        # Обновляем панель слоев, если она открыта
+        if self.layers_panel_visible:
+            self.update_layers_tree()
+        
+        # Проверяем ошибки нумерации после удаления блока
+        self.check_numbering_errors()
+    
+    def _delete_block_children(self, parent_block_id):
+        """Рекурсивно удаляет все дочерние блоки"""
+        children = [b for b in self.blocks if b["model"].parent_id == parent_block_id]
+        for child_block in children:
+            # Рекурсивно удаляем детей
+            self._delete_block_children(child_block["id"])
+            
+            # Удаляем стрелки, соединенные с дочерним блоком
+            block_id = child_block["id"]
+            arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
+            for arrow_data in arrows_to_remove:
+                self.delete_arrow(arrow_data)
+            
+            # Удаляем с холста
+            try:
+                self.canvas.delete(child_block["rect_id"])
+                self.canvas.delete(child_block["text_id"])
+            except tk.TclError:
+                pass
+            
+            self.delete_resize_handles(child_block)
+            self.blocks.remove(child_block)
+    
+    def _renumber_blocks_after_deletion(self, parent_id, deleted_code):
+        """Перенумеровывает блоки после удаления"""
+        # Получаем все блоки на том же уровне
+        if parent_id is None:
+            # Корневой уровень
+            sibling_blocks = [b for b in self.blocks if b["model"].parent_id is None]
+            # Сортируем по коду
+            sibling_blocks.sort(key=lambda b: self._extract_code_number(b["model"].code))
+            
+            # Перенумеровываем
+            for i, block_data in enumerate(sibling_blocks, 1):
+                old_code = block_data["model"].code
+                new_code = f"A{i}"
+                if old_code != new_code:
+                    self._update_block_code_recursive(block_data, old_code, new_code)
+        else:
+            # Уровень с родителем
+            sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
+            # Находим родительский блок
+            parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id), None)
+            if parent_block:
+                # Сортируем по номеру в коде
+                sibling_blocks.sort(key=lambda b: self._extract_code_number(b["model"].code, parent_block.code))
+                
+                # Перенумеровываем
+                for i, block_data in enumerate(sibling_blocks, 1):
+                    old_code = block_data["model"].code
+                    new_code = f"{parent_block.code}.{i}"
+                    if old_code != new_code:
+                        self._update_block_code_recursive(block_data, old_code, new_code)
+    
+    def _extract_code_number(self, code, parent_code=None):
+        """Извлекает номер из кода блока для сортировки"""
+        if parent_code:
+            # Для дочерних блоков: A1.2 -> 2
+            if code.startswith(parent_code + "."):
+                try:
+                    return int(code.split(".")[-1])
+                except ValueError:
+                    return 0
+        else:
+            # Для корневых блоков: A1 -> 1
+            if code.startswith("A") and "." not in code:
+                try:
+                    return int(code[1:])
+                except ValueError:
+                    return 0
+        return 0
+    
+    def _update_block_code_recursive(self, block_data, old_code, new_code):
+        """Обновляет код блока и всех его дочерних блоков"""
+        block = block_data["model"]
+        block.code = new_code
+        block.name = f"Блок {new_code}"
+        
+        # Обновляем текст на canvas
+        if block_data.get("text_id"):
+            try:
+                formatted_text = self.format_block_text(block.name, block.width)
+                self.canvas.itemconfig(block_data["text_id"], text=formatted_text)
+            except tk.TclError:
+                pass
+        
+        # Обновляем все дочерние блоки
+        children = [b for b in self.blocks if b["model"].parent_id == block.id]
+        for child_block_data in children:
+            child_old_code = child_block_data["model"].code
+            # Заменяем префикс кода
+            if child_old_code.startswith(old_code + "."):
+                child_new_code = child_old_code.replace(old_code + ".", new_code + ".", 1)
+                self._update_block_code_recursive(child_block_data, child_old_code, child_new_code)
+        
+        # Обновляем панель свойств, если этот блок выбран
+        if self.selected_block == block_data:
+            self.properties_panel.update_properties(block)
+    
+    def _shift_block_and_children(self, block_data):
+        """Сдвигает блок и всех его дочерних элементов на 1 позицию вперед"""
+        block = block_data["model"]
+        old_code = block.code
+        
+        # Определяем новый код (увеличиваем последний номер на 1)
+        if "." in old_code:
+            # Для дочерних блоков: A1.2 -> A1.3
+            parts = old_code.split(".")
+            try:
+                last_num = int(parts[-1])
+                new_code = ".".join(parts[:-1]) + "." + str(last_num + 1)
+            except ValueError:
+                # Если не удалось распарсить, просто добавляем .1
+                new_code = old_code + ".1"
+        else:
+            # Для корневых блоков: A2 -> A3
+            try:
+                num = int(old_code[1:])
+                new_code = f"A{num + 1}"
+            except ValueError:
+                new_code = old_code + "1"
+        
+        # Проверяем, не конфликтует ли новый код
+        conflicting_block = next(
+            (b for b in self.blocks 
+             if b["model"].code == new_code and b["model"].id != block.id 
+             and b["model"].parent_id == block.parent_id),
+            None
+        )
+        
+        if conflicting_block:
+            # Рекурсивно сдвигаем конфликтующий блок
+            self._shift_block_and_children(conflicting_block)
+        
+        # Обновляем код блока и всех его детей
+        self._update_block_code_recursive(block_data, old_code, new_code)
+    
+    def _update_children_codes_recursive(self, block_data, old_parent_code, new_parent_code):
+        """Обновляет коды всех дочерних блоков при изменении кода родителя"""
+        children = [b for b in self.blocks if b["model"].parent_id == block_data["model"].id]
+        for child_block_data in children:
+            child_old_code = child_block_data["model"].code
+            # Заменяем префикс кода родителя
+            if child_old_code.startswith(old_parent_code + "."):
+                child_new_code = child_old_code.replace(old_parent_code + ".", new_parent_code + ".", 1)
+                self._update_block_code_recursive(child_block_data, child_old_code, child_new_code)
     
     def show_arrow_action_buttons(self, arrow_data):
         """Показывает кнопки действий для выбранной стрелки."""
@@ -3782,6 +4066,119 @@ class IDEF0App:
         if hasattr(self, 'footer_right_label'):
             level_path = self.layer_manager.get_level_path([b["model"] for b in self.blocks])
             self.footer_right_label.config(text=level_path)
+        
+        # Проверяем ошибки нумерации
+        self.check_numbering_errors()
+    
+    def check_numbering_errors(self):
+        """Проверяет пропуски в нумерации блоков и показывает/скрывает индикатор ошибки"""
+        missing_codes = self._find_missing_codes()
+        
+        if missing_codes:
+            # Показываем индикатор ошибки
+            if hasattr(self, 'error_indicator_canvas'):
+                self.error_indicator_canvas.place(relx=1, rely=1, x=-40, y=-30, anchor='se')
+                # Сохраняем список отсутствующих кодов для tooltip
+                self.missing_codes = missing_codes
+        else:
+            # Скрываем индикатор ошибки
+            if hasattr(self, 'error_indicator_canvas'):
+                self.error_indicator_canvas.place_forget()
+                if hasattr(self, 'missing_codes'):
+                    self.missing_codes = []
+    
+    def _find_missing_codes(self):
+        """Находит пропуски в нумерации блоков"""
+        missing_codes = []
+        
+        # Проверяем корневой уровень
+        root_blocks = [b for b in self.blocks if b["model"].parent_id is None]
+        if root_blocks:
+            used_numbers = set()
+            for block_data in root_blocks:
+                code = block_data["model"].code
+                if code.startswith("A") and "." not in code:
+                    try:
+                        num = int(code[1:])
+                        used_numbers.add(num)
+                    except ValueError:
+                        pass
+            
+            if used_numbers:
+                max_num = max(used_numbers)
+                for i in range(1, max_num + 1):
+                    if i not in used_numbers:
+                        missing_codes.append(f"A{i}")
+        
+        # Проверяем дочерние уровни
+        def check_children(parent_id, parent_code):
+            children = [b for b in self.blocks if b["model"].parent_id == parent_id]
+            if children:
+                used_numbers = set()
+                for block_data in children:
+                    code = block_data["model"].code
+                    if code.startswith(parent_code + "."):
+                        try:
+                            num = int(code.split(".")[-1])
+                            used_numbers.add(num)
+                        except ValueError:
+                            pass
+                
+                if used_numbers:
+                    max_num = max(used_numbers)
+                    for i in range(1, max_num + 1):
+                        if i not in used_numbers:
+                            missing_codes.append(f"{parent_code}.{i}")
+                
+                # Рекурсивно проверяем детей
+                for block_data in children:
+                    check_children(block_data["model"].id, block_data["model"].code)
+        
+        # Проверяем все уровни иерархии
+        for root_block in root_blocks:
+            check_children(root_block["model"].id, root_block["model"].code)
+        
+        return missing_codes
+    
+    def _show_error_tooltip(self, event):
+        """Показывает tooltip с информацией об ошибке"""
+        if not hasattr(self, 'missing_codes') or not self.missing_codes:
+            return
+        
+        # Создаем tooltip окно
+        self.error_tooltip = tk.Toplevel(self.root)
+        self.error_tooltip.wm_overrideredirect(True)
+        self.error_tooltip.wm_attributes("-topmost", True)
+        
+        # Формируем текст ошибки
+        if len(self.missing_codes) == 1:
+            error_text = f"Не хватает элемента {self.missing_codes[0]}"
+        else:
+            error_text = f"Не хватает элементов: {', '.join(self.missing_codes)}"
+        
+        label = tk.Label(
+            self.error_tooltip,
+            text=error_text,
+            font=("Segoe UI", 9),
+            bg="#fff3cd",
+            fg="#856404",
+            relief="solid",
+            borderwidth=1,
+            padx=8,
+            pady=4
+        )
+        label.pack()
+        
+        # Позиционируем tooltip рядом с курсором
+        x = event.x_root + 10
+        y = event.y_root - 30
+        self.error_tooltip.geometry(f"+{x}+{y}")
+    
+    def _hide_error_tooltip(self, event):
+        """Скрывает tooltip"""
+        if self.error_tooltip:
+            self.error_tooltip.destroy()
+            self.error_tooltip = None
     
     def draw_arrow(self, arrow_data):
         """
@@ -4297,23 +4694,8 @@ class IDEF0App:
     def delete_selected(self):
         """Удаляет выбранный элемент (блок или стрелку)"""
         if self.selected_block:
-            # Удаляем стрелки, соединенные с этим блоком
-            block_id = self.selected_block["id"]
-            arrows_to_remove = [a for a in self.arrows if a["arrow"].is_connected_to_block(block_id)]
-            for arrow_data in arrows_to_remove:
-                self.delete_arrow(arrow_data)
-            
-            # Удаляем блок
-            self.canvas.delete(self.selected_block["rect_id"])
-            self.canvas.delete(self.selected_block["text_id"])
-            self.delete_resize_handles(self.selected_block)
-            self.blocks.remove(self.selected_block)
-            self.selected_block = None
-            self.properties_panel.update_properties(None)
-            self.hide_block_action_buttons()
-            
-            # Сохраняем состояние для undo
-            self.save_state()
+            # Используем delete_block для правильной перенумерации
+            self.delete_block(self.selected_block)
             
             print(f"Блок удален")
         elif self.selected_arrow:
