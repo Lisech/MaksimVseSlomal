@@ -39,6 +39,7 @@ class Colors:
         "TEXT_PRIMARY": "#ffffff",
         "TEXT_SECONDARY": "#cbd5f5",
         "PRIMARY": "#3b82f6",
+<<<<<<< Updated upstream
         "BORDER": "#1f2937",
         "SIDEBAR": "#020617",
         "GRID": "#111827",
@@ -48,6 +49,17 @@ class Colors:
         "BLOCK_FILL": "#0f172a",
         "BLOCK_BORDER": "#ffffff",
         "ARROW_COLOR": "#ffffff",
+=======
+        "BORDER": "#334155",
+        "SIDEBAR": "#0f172a",
+        "GRID": "#334155",  # Темная сетка, видимая на темном фоне (мелкая сетка)
+        "GRID_STRONG": "#475569",  # Более светлая для основных линий (крупная сетка)
+        "ACTIVE": "#1e3a5f",
+        "HOVER": "#2d3748",
+        "BLOCK_FILL": "#1e3a5f",
+        "BLOCK_BORDER": "#94a3b8",
+        "ARROW_COLOR": "#1e3a5f"  # Цвет стрелок по умолчанию для темной темы
+>>>>>>> Stashed changes
     }
 
     # Текущие значения (будут переопределены при вызове use_light/use_dark)

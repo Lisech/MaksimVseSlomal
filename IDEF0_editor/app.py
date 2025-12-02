@@ -8,7 +8,23 @@ from tkinter import ttk
 import os
 import math
 import sys
+<<<<<<< Updated upstream
 import subprocess
+=======
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+import json
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+>>>>>>> Stashed changes
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
 from PIL import Image, ImageTk
@@ -62,6 +78,7 @@ class IDEF0App:
         self.arrow_preview_line = None  # превью линии стрелки
         self.arrow_drawing = False  # флаг активного рисования стрелки
         self.zoom_scale = 1.0  # текущий масштаб
+        self.last_grid_scale = 1.0  # последний масштаб, при котором сетка была перерисована
         self.attachment_points = []  # визуальные элементы точек прикрепления
         self.attachment_point_size = 12  # размер точки прикрепления
         self.attachment_snap_distance = 20  # расстояние для прикрепления
@@ -461,6 +478,7 @@ class IDEF0App:
             btn = self.create_toolbar_button(toolbar_frame, text)
             self.set_widget_icon(btn, icon_name, size, compound='left')
             btn.pack(side=tk.LEFT, padx=6)
+<<<<<<< Updated upstream
         
         # Разделитель перед undo/redo
         separator = tk.Frame(toolbar_frame, bg=Colors.BORDER, width=1)
@@ -561,6 +579,31 @@ class IDEF0App:
         paste_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(paste_btn)
         self.paste_btn = paste_btn
+=======
+<<<<<<< HEAD
+            
+            # Привязываем обработчики для кнопок файлов
+            if text == "Новый":
+                btn.configure(command=self.new_file)
+            elif text == "Открыть":
+                btn.configure(command=self.open_file)
+            elif text == "Сохранить":
+                btn.configure(command=self.save_file)
+            elif text == "Сохранить как":
+                btn.configure(command=self.save_file_as)
+=======
+        
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+>>>>>>> Stashed changes
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -879,6 +922,9 @@ class IDEF0App:
 
         # Автоматически выбираем новый блок
         self.select_block(block_data)
+
+        # Убеждаемся, что сетка остается под блоком
+        self._ensure_grid_at_bottom()
 
         # Сохраняем состояние для undo
         self.save_state()
@@ -1249,6 +1295,36 @@ class IDEF0App:
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
+<<<<<<< Updated upstream
+=======
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+        # Проверяем, что блок принадлежит текущему уровню
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        if block_data["model"] not in current_blocks:
+            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню")
+            return
+        
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+        # Если открыто меню настроек, закрываем его
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    self.close_settings_menu()
+            except:
+                pass
+        
+>>>>>>> Stashed changes
         # Сбрасываем выделение предыдущего блока
         if self.selected_block:
             prev_model = self.selected_block["model"]
@@ -1500,6 +1576,37 @@ class IDEF0App:
         )
         # Привязываем к нижнему левому углу контейнера
         self.footer_label.place(relx=0, rely=1, x=14, y=-10, anchor='sw')
+<<<<<<< Updated upstream
+=======
+        
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+        # Footer для отображения текущего уровня
+        self.footer_right_label = tk.Label(
+            canvas_frame,
+            text="Уровень 0",
+            font=("Segoe UI", 9),
+            fg=Colors.TEXT_SECONDARY,
+            bg=Colors.SURFACE
+        )
+        self.footer_right_label.place(relx=1, rely=1, x=-14, y=-10, anchor='se')
+        
+        # Обновляем footer после создания
+        self.root.after(100, self.update_footer_info)
+        
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+        # Плашка с кнопками undo/redo и копирование/вставка в рабочей области
+        self.create_workspace_toolbar(canvas_frame)
+>>>>>>> Stashed changes
 
         # Привязка к событиям клавиатуры
         self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
@@ -1530,6 +1637,388 @@ class IDEF0App:
         # Привязываем горячие клавиши после создания canvas
         self.setup_hotkeys()
 
+<<<<<<< Updated upstream
+=======
+    def create_workspace_toolbar(self, parent):
+        """Создает плашку с кнопками undo/redo и копирование/вставка в рабочей области"""
+        # Создаем контейнер для плашки
+        toolbar_panel = tk.Frame(
+            parent,
+            bg=Colors.SURFACE,
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER
+        )
+        # Размещаем в верхнем левом углу
+        toolbar_panel.place(relx=0, rely=0, x=12, y=12, anchor='nw')
+        
+        # Внутренний фрейм для кнопок
+        buttons_frame = tk.Frame(toolbar_panel, bg=Colors.SURFACE)
+        buttons_frame.pack(padx=4, pady=4)
+        
+        # Кнопка Undo
+        undo_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.undo
+        )
+        self.set_widget_icon(undo_btn, "Undo", (20, 20))
+        undo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(undo_btn)
+        self.undo_btn = undo_btn
+        
+        # Кнопка Redo
+        redo_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.redo
+        )
+        self.set_widget_icon(redo_btn, "Redo", (20, 20))
+        redo_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(redo_btn)
+        self.redo_btn = redo_btn
+        
+        # Разделитель
+        separator = tk.Frame(buttons_frame, bg=Colors.BORDER, width=1)
+        separator.pack(side=tk.LEFT, padx=4, fill=tk.Y, pady=2)
+        
+        # Кнопка Вырезать
+        cut_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.cut_selected
+        )
+        self.set_widget_icon(cut_btn, "virez", (20, 20))
+        cut_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(cut_btn)
+        self.cut_btn = cut_btn
+        
+        # Кнопка Копировать
+        copy_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.copy_selected
+        )
+        self.set_widget_icon(copy_btn, "Copy", (20, 20))
+        copy_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(copy_btn)
+        self.copy_btn = copy_btn
+        
+        # Кнопка Вставить
+        paste_btn = tk.Button(
+            buttons_frame,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            command=self.paste_clipboard
+        )
+        self.set_widget_icon(paste_btn, "vstavka", (20, 20))
+        paste_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(paste_btn)
+        self.paste_btn = paste_btn
+        
+        # Сохраняем ссылку на панель для обновления темы
+        self.workspace_toolbar = toolbar_panel
+        
+        # Обновляем состояние кнопок undo/redo
+        self.update_undo_redo_buttons()
+        
+        # Инициализируем переменную для меню настроек
+        self.settings_menu = None
+
+    def open_settings_menu(self):
+        """Открывает меню настроек вместо панели свойств"""
+        # Если меню уже создано и видимо, закрываем его (переключаем обратно на панель свойств)
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            try:
+                # Проверяем, видимо ли меню (grid_info возвращает словарь, если виджет размещен через grid)
+                grid_info = self.settings_menu.grid_info()
+                if grid_info:
+                    self.close_settings_menu()
+                    return
+            except:
+                pass
+        
+        # Создаем или показываем меню настроек
+        self.create_settings_menu()
+    
+    def create_settings_menu(self):
+        """Создает меню настроек вместо панели свойств"""
+        # Скрываем панель свойств
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel.grid_remove()
+        
+        # Получаем main_frame для размещения меню
+        main_frame = self.main_frame
+        
+        # Создаем контейнер для меню настроек (в том же месте, где панель свойств)
+        if not hasattr(self, 'settings_menu') or not self.settings_menu or not self.settings_menu.winfo_exists():
+            # Внешняя панель с границами, как у sidebar
+            settings_panel = tk.Frame(
+                main_frame,
+                bg=Colors.SURFACE,
+                width=Dimensions.PROPERTIES_WIDTH,
+                highlightthickness=1,
+                highlightbackground=Colors.BORDER,
+                takefocus=False  # Не получает фокус
+            )
+            settings_panel.pack_propagate(False)
+            settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+            
+            # Создаем внутренний контейнер
+            main_content = tk.Frame(
+                settings_panel,
+                bg=Colors.SURFACE,
+                highlightthickness=0,
+                takefocus=False  # Не получает фокус
+            )
+            main_content.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
+            
+            self.settings_menu = settings_panel
+            self.settings_main_content = main_content
+        else:
+            # Если меню уже существует, обновляем его цвета и пересоздаем содержимое
+            settings_panel = self.settings_menu
+            # Обновляем цвета панели и границы
+            settings_panel.configure(bg=Colors.SURFACE, highlightbackground=Colors.BORDER)
+            main_content = self.settings_main_content
+            # Обновляем цвета внутреннего контейнера
+            main_content.configure(bg=Colors.SURFACE)
+            # Очищаем содержимое
+            for widget in main_content.winfo_children():
+                widget.destroy()
+            # Удаляем старую кнопку закрытия, если она есть
+            for widget in settings_panel.winfo_children():
+                if isinstance(widget, tk.Button) and widget.winfo_exists():
+                    try:
+                        widget_text = widget.cget("text")
+                        if widget_text == "✕":
+                            widget.destroy()
+                    except:
+                        pass
+        
+        # Кнопка закрытия (крестик) в верхнем правом углу панели
+        close_btn = tk.Button(
+            settings_panel,
+            text="✕",
+            font=("Segoe UI", 16),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_SECONDARY,
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            activeforeground=Colors.TEXT_PRIMARY,
+            highlightthickness=0,
+            command=self.close_settings_menu,
+            cursor="hand2"
+        )
+        close_btn.place(relx=1.0, rely=0.0, anchor='ne', x=-8, y=8)
+        self.apply_hover_effect(close_btn)
+        
+        # Создаем содержимое меню в main_content
+        # Основной контейнер для центрирования
+        main_container = tk.Frame(main_content, bg=Colors.SURFACE)
+        main_container.pack(fill=tk.BOTH, expand=True)
+        
+        # Заголовок меню
+        header_frame = tk.Frame(main_container, bg=Colors.SURFACE)
+        header_frame.pack(fill=tk.X, padx=16, pady=(16, 12))
+        
+        # Заголовок
+        title_label = tk.Label(
+            header_frame,
+            text="Настройки",
+            font=("Segoe UI", 14, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT)
+        
+        # Контейнер для центрирования кнопок
+        center_container = tk.Frame(main_container, bg=Colors.SURFACE)
+        center_container.pack(expand=True, fill=tk.BOTH)
+        
+        # Контейнер для кнопок (с ограниченной шириной для центрирования)
+        buttons_frame = tk.Frame(center_container, bg=Colors.SURFACE)
+        buttons_frame.pack(expand=True, pady=(0, 16))
+        
+        # Кнопка Обучение
+        learning_btn = tk.Button(
+            buttons_frame,
+            text="Обучение",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.show_learning  # Заглушка, можно добавить функцию позже
+        )
+        self.set_widget_icon(learning_btn, "BookOpen", (20, 20), compound='left')
+        learning_btn.pack(fill=tk.X, pady=(0, 12))
+        self.apply_hover_effect(learning_btn)
+        
+        # Кнопка Документация
+        doc_btn = tk.Button(
+            buttons_frame,
+            text="Документация",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.show_documentation
+        )
+        self.set_widget_icon(doc_btn, "HelpCircle", (20, 20), compound='left')
+        doc_btn.pack(fill=tk.X, pady=(0, 12))
+        self.apply_hover_effect(doc_btn)
+        
+        # Кнопка смены темы
+        self.theme_toggle_btn = tk.Button(
+            buttons_frame,
+            text="Тёмная тема",
+            font=("Segoe UI", 11),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="solid",
+            bd=1,
+            padx=24,
+            pady=14,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=0,
+            borderwidth=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            anchor="w",
+            command=self.toggle_theme
+        )
+        self.theme_toggle_btn.pack(fill=tk.X)
+        self.apply_hover_effect(self.theme_toggle_btn)
+        self.update_theme_button_label()
+        
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+<<<<<<< HEAD
+        # Показываем меню (если оно было скрыто через grid_remove)
+        try:
+            grid_info = settings_panel.grid_info()
+            if not grid_info:
+                # Если панель была скрыта через grid_remove, показываем её
+                settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+        except Exception:
+            # Если возникла ошибка, просто пытаемся показать панель
+            try:
+                settings_panel.grid(row=0, column=2, sticky="nsew", padx=(12, 0))
+            except Exception:
+                pass
+=======
+        # Показываем меню
+        settings_panel.grid()
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+        # Показываем меню
+        settings_panel.grid()
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+        # Показываем меню
+        settings_panel.grid()
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+=======
+        # Показываем меню
+        settings_panel.grid()
+>>>>>>> 794d2ed631cde09fdc05824407cae5530c9d8f40
+        
+        # Привязываем ESC для закрытия меню
+        def on_escape(event):
+            self.close_settings_menu()
+        settings_panel.bind("<Escape>", on_escape)
+        # Не устанавливаем фокус на окно настроек, чтобы оно не выделялось
+    
+    def close_settings_menu(self):
+        """Закрывает меню настроек и показывает панель свойств"""
+        # Скрываем меню настроек
+        if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
+            self.settings_menu.grid_remove()
+        
+        # Показываем панель свойств обратно
+        if hasattr(self, 'properties_panel'):
+            self.properties_panel.grid()
+            
+            # Обновляем панель свойств для текущего выбранного элемента
+            if self.selected_arrow:
+                # Если выбрана стрелка, обновляем панель свойств для стрелки
+                self.properties_panel.update_properties(self.selected_arrow["arrow"])
+            elif self.selected_block:
+                # Если выбран блок, обновляем панель свойств для блока
+                self.properties_panel.update_properties(self.selected_block["model"])
+            else:
+                # Если ничего не выбрано, сбрасываем панель свойств
+                self.properties_panel.update_properties(None)
+    
+    def show_learning(self):
+        """Показывает окно обучения (заглушка)"""
+        # Можно добавить функциональность позже
+        import tkinter.messagebox as messagebox
+        messagebox.showinfo("Обучение", "Функция обучения будет добавлена позже")
+
+>>>>>>> Stashed changes
     # --- Кнопки действий для блока (переместить / копировать / удалить) ---
 
     def show_block_action_buttons(self, block_data):
@@ -2443,20 +2932,88 @@ class IDEF0App:
             self.canvas.itemconfig(text_id, fill=new_text)
     
     def apply_theme_to_arrows(self, from_palette, to_palette):
-        """Обновляет цвета стрелок при смене темы."""
+        """Обновляет цвета стрелок при смене темы, сохраняя их позиции."""
         if not hasattr(self, "canvas"):
             return
         
         new_arrow_color = to_palette.get("ARROW_COLOR", Colors.ARROW_COLOR)
+        from_arrow_color = from_palette.get("ARROW_COLOR", "")
         
         for arrow_data in self.arrows:
             arrow = arrow_data["arrow"]
-            # Обновляем цвет стрелки на цвет из темы
-            arrow.color = new_arrow_color
             
-            # Перерисовываем стрелку с новым цветом
-            if arrow_data.get("line_id") or arrow_data.get("arrowhead_id"):
-                self.draw_arrow(arrow_data)
+            # Сохраняем текущие координаты линии стрелки
+            saved_line_coords = None
+            if arrow_data.get("line_id"):
+                try:
+                    saved_line_coords = self.canvas.coords(arrow_data["line_id"])
+                except tk.TclError:
+                    pass
+            
+            # Определяем, нужно ли обновлять цвет стрелки
+            # Если цвет стрелки совпадает с цветом старой темы, обновляем на новый цвет темы
+            current_color = arrow.color if arrow.color else from_arrow_color
+            should_update_color = current_color.lower() == from_arrow_color.lower()
+            
+            if should_update_color:
+                arrow.color = new_arrow_color
+            
+            # Обновляем цвет визуальных элементов стрелки БЕЗ перерисовки координат
+            try:
+                # Обновляем цвет линии стрелки
+                if arrow_data.get("line_id"):
+                    line_id = arrow_data["line_id"]
+                    arrow_color = arrow.color if arrow.color else new_arrow_color
+                    self.canvas.itemconfig(line_id, fill=arrow_color)
+                    
+                    # Восстанавливаем координаты линии, если они были сохранены
+                    # Это гарантирует, что стрелка не сместится
+                    if saved_line_coords and len(saved_line_coords) >= 4:
+                        self.canvas.coords(line_id, *saved_line_coords)
+                
+                # Обновляем цвет наконечника стрелки
+                # Для наконечника нужно перерисовать, но с теми же координатами
+                if arrow_data.get("arrowhead_id"):
+                    arrowhead_id = arrow_data["arrowhead_id"]
+                    arrow_color = arrow.color if arrow.color else new_arrow_color
+                    
+                    # Используем сохраненные координаты линии для определения направления наконечника
+                    line_coords = saved_line_coords if saved_line_coords else None
+                    if not line_coords and arrow_data.get("line_id"):
+                        try:
+                            line_coords = self.canvas.coords(arrow_data["line_id"])
+                        except tk.TclError:
+                            pass
+                    
+                    if line_coords and len(line_coords) >= 4:
+                        # Удаляем старый наконечник
+                        try:
+                            self.canvas.delete(arrowhead_id)
+                        except tk.TclError:
+                            pass
+                        
+                        # Создаем новый наконечник с тем же направлением
+                        if arrow.bend_x is not None and arrow.bend_y is not None:
+                            # Изогнутая стрелка: наконечник от точки изгиба к концу
+                            x2, y2 = line_coords[-2], line_coords[-1]
+                            new_arrowhead = self.create_arrowhead(arrow.bend_x, arrow.bend_y, x2, y2, arrow_color, arrow.width)
+                        else:
+                            # Прямая стрелка: наконечник от начала к концу
+                            x1, y1 = line_coords[0], line_coords[1]
+                            x2, y2 = line_coords[-2], line_coords[-1]
+                            new_arrowhead = self.create_arrowhead(x1, y1, x2, y2, arrow_color, arrow.width)
+                        
+                        if new_arrowhead:
+                            arrow_data["arrowhead_id"] = new_arrowhead
+                            self.canvas.addtag_withtag(arrow.id, new_arrowhead)
+                            # Поднимаем наконечник наверх
+                            self.canvas.tag_raise(new_arrowhead)
+            except (tk.TclError, AttributeError, IndexError) as e:
+                # Если не удалось обновить цвет через itemconfig, перерисовываем стрелку полностью
+                # Но это должно быть редко
+                print(f"Ошибка при обновлении цвета стрелки {arrow.id}: {e}")
+                if arrow_data.get("line_id") or arrow_data.get("arrowhead_id"):
+                    self.draw_arrow(arrow_data)
 
     def _update_theme_for_widget(self, widget, from_palette, to_palette):
         """
@@ -2554,25 +3111,93 @@ class IDEF0App:
             cx = self.canvas.canvasx(sx)
             cy = self.canvas.canvasy(sy)
 
+<<<<<<< Updated upstream
         # Масштабируем все элементы
         self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
+=======
+        # Проверяем, нужно ли перерисовывать сетку (каждые 15% изменения масштаба)
+        scale_change = abs(new_scale - self.last_grid_scale)
+        need_redraw_grid = scale_change >= 0.15
+        
+        if need_redraw_grid:
+            # Удаляем сетку перед масштабированием
+            try:
+                self.canvas.delete('grid')
+            except (tk.TclError, AttributeError):
+                pass
+            
+            # Масштабируем все элементы, кроме сетки
+            try:
+                all_items = self.canvas.find_all()
+                for item in all_items:
+                    try:
+                        tags = self.canvas.gettags(item)
+                        # Масштабируем только элементы, которые не являются сеткой
+                        if 'grid' not in tags:
+                            self.canvas.scale(item, cx, cy, norm_factor, norm_factor)
+                    except (tk.TclError, ValueError):
+                        continue
+            except (tk.TclError, AttributeError):
+                pass
+        else:
+            # Масштабируем все элементы, включая сетку
+            try:
+                self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
+            except (tk.TclError, AttributeError):
+                pass
+>>>>>>> Stashed changes
 
         # Перерисовываем/обновляем элементы, чувствительные к масштабу
         # Текст в Tk не масштабируется шрифтом — оставляем как есть для простоты
 
-        # Пересчёт границ прокрутки по содержимому
+        # Обновляем текущий масштаб ПЕРЕД пересчетом границ
+        self.zoom_scale = new_scale
+
+        # Пересчёт границ прокрутки по содержимому (без сетки, если она была удалена)
         bbox = self.canvas.bbox("all")
         if bbox:
             self.canvas.configure(scrollregion=bbox)
 
-        # Обновляем текущий масштаб и UI
-        self.zoom_scale = new_scale
+        # Обновляем UI
         percent = int(round(self.zoom_scale * 100))
         if hasattr(self, "zoom_label"):
             self.zoom_label.config(text=f"{percent}%")
         if hasattr(self, "footer_label"):
             base = "Диаграмма: Пример IDEF0 | Масштаб: "
             self.footer_label.config(text=f"{base}{percent}%")
+        
+        # Перерисовываем сетку с начальными размерами, если нужно
+        # ВАЖНО: перерисовываем ПОСЛЕ обновления scrollregion, чтобы сетка рисовалась на всей области
+        if need_redraw_grid:
+            self.draw_grid()
+            self.last_grid_scale = new_scale
+            # После перерисовки сетки обновляем scrollregion с учетом сетки
+            bbox_with_grid = self.canvas.bbox("all")
+            if bbox_with_grid:
+                self.canvas.configure(scrollregion=bbox_with_grid)
+        else:
+            # Даже если не нужно перерисовывать, проверяем что сетка существует и видна
+            try:
+                grid_items = self.canvas.find_withtag('grid')
+                if not grid_items:
+                    # Если сетка отсутствует, перерисовываем её
+                    self.draw_grid()
+                    # Обновляем scrollregion с учетом сетки
+                    bbox_with_grid = self.canvas.bbox("all")
+                    if bbox_with_grid:
+                        self.canvas.configure(scrollregion=bbox_with_grid)
+                else:
+                    # Убеждаемся, что сетка видна под всеми элементами
+                    self._ensure_grid_at_bottom()
+            except (tk.TclError, AttributeError):
+                # Если возникла ошибка, перерисовываем сетку
+                try:
+                    self.draw_grid()
+                    bbox_with_grid = self.canvas.bbox("all")
+                    if bbox_with_grid:
+                        self.canvas.configure(scrollregion=bbox_with_grid)
+                except:
+                    pass
 
     def on_space_press(self, event):
         """Обработчик нажатия пробела - временное включение панорамирования"""
@@ -2921,21 +3546,70 @@ class IDEF0App:
         widget.bind("<Leave>", on_leave)
     
     def draw_grid(self):
-        """Рисует сетку по всей области холста"""
+        """
+        Рисует сетку по всей области холста.
+        Размер квадратов сетки одинаковый в светлой и темной темах.
+        Использует фиксированные константы: 20px для мелкой сетки, 100px для крупной.
+        """
+        # Удаляем старую сетку
         self.canvas.delete('grid')
         
         # Рисуем сетку на всей области scrollregion
-        left, top, right, bottom = self.canvas.cget('scrollregion').split()
-        left, top, right, bottom = int(left), int(top), int(right), int(bottom)
+        try:
+            scrollregion = self.canvas.cget('scrollregion')
+            if not scrollregion:
+                # Если scrollregion не установлен, используем значения по умолчанию
+                left, top, right, bottom = -2000, -2000, 4000, 4000
+            else:
+                left, top, right, bottom = scrollregion.split()
+                left, top, right, bottom = int(left), int(top), int(right), int(bottom)
+            
+            # Расширяем область для сетки, чтобы она покрывала весь видимый холст
+            # Берем максимальную область из scrollregion и видимой области canvas
+            try:
+                canvas_width = self.canvas.winfo_width()
+                canvas_height = self.canvas.winfo_height()
+                # Получаем видимую область в координатах canvas
+                visible_left = self.canvas.canvasx(0)
+                visible_top = self.canvas.canvasy(0)
+                visible_right = self.canvas.canvasx(canvas_width)
+                visible_bottom = self.canvas.canvasy(canvas_height)
+                
+                # Расширяем область сетки, чтобы покрыть и scrollregion, и видимую область
+                left = min(left, int(visible_left) - 1000)
+                top = min(top, int(visible_top) - 1000)
+                right = max(right, int(visible_right) + 1000)
+                bottom = max(bottom, int(visible_bottom) + 1000)
+            except (tk.TclError, AttributeError, ValueError):
+                # Если не удалось получить видимую область, используем только scrollregion
+                pass
+        except (ValueError, AttributeError, tk.TclError):
+            # Если возникла ошибка, используем значения по умолчанию
+            left, top, right, bottom = -2000, -2000, 4000, 4000
 
+<<<<<<< Updated upstream
         # Minor grid (20px) - более светлая
         for i in range(left, right, 20):
+=======
+        # Используем константы из Dimensions для единого размера сетки во всех темах
+        # Эти значения гарантированно одинаковые для светлой и темной темы
+        minor_step = Dimensions.GRID_MINOR_STEP  # 20 пикселей - единый размер для всех тем
+        major_step = Dimensions.GRID_MAJOR_STEP  # 100 пикселей - единый размер для всех тем
+
+        # Minor grid - более светлая (мелкая сетка)
+        for i in range(left, right, minor_step):
+>>>>>>> Stashed changes
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID, width=1, tags='grid')
         for i in range(top, bottom, 20):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID, width=1, tags='grid')
 
+<<<<<<< Updated upstream
         # Major grid (100px) - немного темнее
         for i in range(left, right, 100):
+=======
+        # Major grid - более темная/яркая (крупная сетка)
+        for i in range(left, right, major_step):
+>>>>>>> Stashed changes
             self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
         for i in range(top, bottom, 100):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
@@ -2950,9 +3624,20 @@ class IDEF0App:
         """Гарантируем, что сетка остаётся под всеми элементами."""
         if hasattr(self, "canvas"):
             try:
-                self.canvas.tag_lower('grid')
+                # Проверяем, существует ли сетка
+                grid_items = self.canvas.find_withtag('grid')
+                if not grid_items:
+                    # Если сетка отсутствует, перерисовываем её
+                    self.draw_grid()
+                else:
+                    # Если сетка есть, отправляем её под все элементы
+                    self.canvas.tag_lower('grid')
             except tk.TclError:
-                pass
+                # Если возникла ошибка, перерисовываем сетку
+                try:
+                    self.draw_grid()
+                except:
+                    pass
 
     def bring_selected_forward(self):
         """Поднимает выбранный элемент (блок или стрелку) на передний план."""

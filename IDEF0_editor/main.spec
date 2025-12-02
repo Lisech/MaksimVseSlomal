@@ -6,8 +6,18 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('img', 'img')],
-    hiddenimports=['app', 'models', 'properties', 'styles'],  # Явно указываем все модули
+    datas=[
+        (r'img', 'img'),  # Включаем всю папку с изображениями
+    ],
+    hiddenimports=[
+        'tkinter',
+        'tkinter.ttk',
+        'tkinter.filedialog',
+        'tkinter.messagebox',
+        'PIL',
+        'PIL.Image',
+        'PIL.ImageTk',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -17,26 +27,29 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
 exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
-    name='main',
+    name='IDEF0_Editor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=True,  # Временно включаем консоль для отладки
+    console=False,  # Без консольного окна
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=None,  # Можно добавить иконку позже
 )
 

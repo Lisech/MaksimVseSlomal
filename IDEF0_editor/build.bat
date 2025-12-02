@@ -1,50 +1,26 @@
 @echo off
-echo ========================================
-echo Пересборка IDEF0 Editor
-echo ========================================
+echo Сборка IDEF0 Editor в exe файл...
 echo.
 
-REM Очистка старых файлов сборки
-echo Очистка старых файлов...
+REM Очистка предыдущих сборок
 if exist build rmdir /s /q build
-if exist dist\main.exe del /q dist\main.exe
-echo Готово.
-echo.
+if exist dist rmdir /s /q dist
 
-REM Проверка наличия PyInstaller
-echo Проверка PyInstaller...
-python -m pip show pyinstaller >nul 2>&1
-if errorlevel 1 (
-    echo PyInstaller не найден. Устанавливаю...
-    python -m pip install pyinstaller
-    if errorlevel 1 (
-        echo Ошибка установки PyInstaller!
-        pause
-        exit /b 1
-    )
-)
-echo PyInstaller найден.
-echo.
+echo Установка зависимостей...
+pip install -r requirements.txt
 
-REM Сборка exe
-echo Начинаю сборку exe...
+echo.
+echo Сборка exe файла...
 pyinstaller main.spec
 
-if errorlevel 1 (
-    echo.
-    echo ========================================
-    echo ОШИБКА СБОРКИ!
-    echo ========================================
+if %errorlevel% neq 0 (
+    echo Ошибка при сборке!
     pause
     exit /b 1
-) else (
-    echo.
-    echo ========================================
-    echo СБОРКА ЗАВЕРШЕНА УСПЕШНО!
-    echo ========================================
-    echo Файл: dist\main.exe
-    echo.
 )
 
+echo.
+echo Сборка завершена успешно!
+echo exe файл находится в папке dist\
 pause
 
