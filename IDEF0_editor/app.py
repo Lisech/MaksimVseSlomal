@@ -255,7 +255,7 @@ class IDEF0App:
         # Универсальный обработчик для всех нажатий клавиш
         # Используем bind_all для глобальной привязки, которая работает везде
         def universal_key_handler(event):
-            """Универсальный обработчик клавиш - работает всегда"""
+            """Универсальный обработчик клавиш - работает всегда, независимо от раскладки"""
             # Проверяем фокус, а не event.widget, так как bind_all может давать разные виджеты
             try:
                 widget = self.root.focus_get()
@@ -267,20 +267,22 @@ class IDEF0App:
             
             # Обрабатываем комбинации с Control
             if event.state & 0x4:  # Control нажат
-                key = event.keysym.lower()
-                if key == 'c':
+                # Используем keycode для работы независимо от раскладки
+                # Физические коды клавиш: C=67, V=86, X=88, Z=90, Y=89
+                keycode = event.keycode
+                if keycode == 67:  # C (независимо от раскладки)
                     safe_copy(event)
                     return "break"
-                elif key == 'v':
+                elif keycode == 86:  # V (независимо от раскладки)
                     safe_paste(event)
                     return "break"
-                elif key == 'x':
+                elif keycode == 88:  # X (независимо от раскладки)
                     safe_cut(event)
                     return "break"
-                elif key == 'z':
+                elif keycode == 90:  # Z (независимо от раскладки)
                     safe_undo(event)
                     return "break"
-                elif key == 'y':
+                elif keycode == 89:  # Y (независимо от раскладки)
                     safe_redo(event)
                     return "break"
             # Обрабатываем Delete и BackSpace
@@ -342,6 +344,41 @@ class IDEF0App:
             # Устанавливаем фокус на canvas при входе мыши и клике
             self.canvas.bind("<Enter>", lambda e: self.canvas.focus_set())
             self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set(), add="+")
+        
+        # Обработчик для снятия фокуса с полей ввода при клике вне их
+        def remove_focus_from_entries(event):
+            """Убирает фокус с полей ввода при клике вне их"""
+            try:
+                # Получаем виджет, на который кликнули
+                widget = event.widget
+                
+                # Проверяем, является ли виджет полем ввода
+                if isinstance(widget, tk.Entry):
+                    return  # Клик по полю ввода - оставляем фокус
+                
+                # Проверяем, есть ли виджет под курсором, который является полем ввода
+                try:
+                    x_root, y_root = event.x_root, event.y_root
+                    widget_under_cursor = self.root.winfo_containing(x_root, y_root)
+                    if widget_under_cursor and isinstance(widget_under_cursor, tk.Entry):
+                        return  # Клик по полю ввода - оставляем фокус
+                except:
+                    pass
+                
+                # Если клик был не по полю ввода, убираем фокус с текущего поля ввода
+                focused_widget = self.root.focus_get()
+                if focused_widget and isinstance(focused_widget, tk.Entry):
+                    # Используем after_idle, чтобы не мешать обработке клика
+                    # Устанавливаем фокус на canvas для работы горячих клавиш
+                    if hasattr(self, 'canvas'):
+                        self.root.after_idle(lambda: self.canvas.focus_set())
+                    else:
+                        self.root.after_idle(lambda: self.root.focus_set())
+            except:
+                pass
+        
+        # Привязываем обработчик ко всем виджетам через bind_all
+        self.root.bind_all("<Button-1>", remove_focus_from_entries, add="+")
         
         # Устанавливаем фокус на root для начальной работы
         self.root.focus_set()
@@ -419,7 +456,7 @@ class IDEF0App:
         zoom_frame.pack(side=tk.LEFT, padx=(0, 12))
         self.zoom_frame = zoom_frame
         
-        # Zoom out button
+        # Zoom out button (меньше)
         zoom_out_btn = tk.Button(
             zoom_frame,
             bg=Colors.SURFACE,
@@ -433,15 +470,31 @@ class IDEF0App:
             highlightbackground=Colors.BORDER
         )
         self.set_widget_icon(zoom_out_btn, "ZoomOut", (16,16))
-        zoom_out_btn.configure(command=lambda: self.apply_zoom(0.9))
+        # Шаг масштабирования по кнопке: 5% (0.95 = уменьшение на 5%)
+        zoom_out_btn.configure(command=lambda: self.apply_zoom(0.95))
         zoom_out_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(zoom_out_btn)
         
-        # Zoom percentage
-        self.zoom_label = tk.Label(zoom_frame, text="100%", bg=Colors.SURFACE, fg=Colors.TEXT_PRIMARY, font=("Segoe UI", 10))
-        self.zoom_label.pack(side=tk.LEFT, padx=4)
+        # Кнопка возврата к 100% (равно)
+        reset_zoom_btn = tk.Button(
+            zoom_frame,
+            text="=",
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=6,
+            pady=4,
+            activebackground=Colors.ACTIVE,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            font=("Segoe UI", 10),
+            command=self.reset_zoom_to_100
+        )
+        reset_zoom_btn.pack(side=tk.LEFT, padx=2)
+        self.apply_hover_effect(reset_zoom_btn)
         
-        # Zoom in button
+        # Zoom in button (больше)
         zoom_in_btn = tk.Button(
             zoom_frame,
             bg=Colors.SURFACE,
@@ -455,9 +508,40 @@ class IDEF0App:
             highlightbackground=Colors.BORDER
         )
         self.set_widget_icon(zoom_in_btn, "ZoomIn", (16,16))
-        zoom_in_btn.configure(command=lambda: self.apply_zoom(1.1))
+        # Шаг масштабирования по кнопке: 5% (1.05 = увеличение на 5%)
+        zoom_in_btn.configure(command=lambda: self.apply_zoom(1.05))
         zoom_in_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(zoom_in_btn)
+        
+        # Zoom percentage input field (счетчик)
+        zoom_entry_frame = tk.Frame(zoom_frame, bg=Colors.SURFACE)
+        zoom_entry_frame.pack(side=tk.LEFT, padx=4)
+        
+        # Валидация для поля ввода (разрешаем ввод цифр, проверку диапазона делаем при потере фокуса)
+        vcmd = (self.root.register(self.validate_zoom_input), '%P')
+        self.zoom_entry = tk.Entry(
+            zoom_entry_frame,
+            width=5,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            font=("Segoe UI", 10),
+            relief="solid",
+            bd=1,
+            highlightthickness=1,
+            highlightbackground=Colors.BORDER,
+            highlightcolor=Colors.BORDER,
+            validate='key',
+            validatecommand=vcmd
+        )
+        self.zoom_entry.insert(0, "100")
+        self.zoom_entry.pack(side=tk.LEFT)
+        self.zoom_entry.bind('<Return>', self.on_zoom_entry_change)
+        self.zoom_entry.bind('<FocusOut>', self.on_zoom_entry_change)
+        self.zoom_entry.bind('<Button-1>', lambda e: self.zoom_entry.select_range(0, tk.END))
+        
+        # Процентный знак
+        zoom_percent_label = tk.Label(zoom_entry_frame, text="%", bg=Colors.SURFACE, fg=Colors.TEXT_PRIMARY, font=("Segoe UI", 10))
+        zoom_percent_label.pack(side=tk.LEFT)
 
         # Кнопка настроек
         settings_btn = self.create_toolbar_button(right_frame, "")
@@ -528,7 +612,6 @@ class IDEF0App:
             ("Hand", "Перемещать"),
             ("Square", "Добавить блок"),
             ("ArrowRight", "Добавить стрелку"),
-            ("Type", "Текст"),
             ("Layers", "Слои"),
             ("ChevronUp", "На передний план"),
             ("ChevronDown", "На задний план"),
@@ -1550,6 +1633,11 @@ class IDEF0App:
         # Плашка с кнопками undo/redo и копирование/вставка в рабочей области
         self.create_workspace_toolbar(canvas_frame)
 
+        # Убеждаемся, что canvas получает фокус при клике на него и при запуске
+        self.canvas.bind("<Button-1>", lambda e: self.canvas.focus_set(), add="+")
+        # Устанавливаем фокус на canvas при запуске для работы горячих клавиш
+        self.root.after(100, lambda: self.canvas.focus_set())
+        
         # Привязка к событиям клавиатуры
         self.canvas.bind_all("<KeyPress-space>", self.on_space_press)
         self.canvas.bind_all("<KeyRelease-space>", self.on_space_release)
@@ -1614,6 +1702,8 @@ class IDEF0App:
         self.set_widget_icon(undo_btn, "Undo", (20, 20))
         undo_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(undo_btn)
+        # Добавляем tooltip с горячей клавишей
+        self._create_simple_tooltip(undo_btn, "Отменить (Ctrl+Z)")
         self.undo_btn = undo_btn
         
         # Кнопка Redo
@@ -1633,6 +1723,8 @@ class IDEF0App:
         self.set_widget_icon(redo_btn, "Redo", (20, 20))
         redo_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(redo_btn)
+        # Добавляем tooltip с горячей клавишей
+        self._create_simple_tooltip(redo_btn, "Вернуть (Ctrl+Y)")
         self.redo_btn = redo_btn
         
         # Разделитель
@@ -1656,6 +1748,8 @@ class IDEF0App:
         self.set_widget_icon(cut_btn, "virez", (20, 20))
         cut_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(cut_btn)
+        # Добавляем tooltip с горячей клавишей
+        self._create_simple_tooltip(cut_btn, "Вырезать (Ctrl+X)")
         self.cut_btn = cut_btn
         
         # Кнопка Копировать
@@ -1675,6 +1769,8 @@ class IDEF0App:
         self.set_widget_icon(copy_btn, "Copy", (20, 20))
         copy_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(copy_btn)
+        # Добавляем tooltip с горячей клавишей
+        self._create_simple_tooltip(copy_btn, "Копировать (Ctrl+C)")
         self.copy_btn = copy_btn
         
         # Кнопка Вставить
@@ -1694,6 +1790,8 @@ class IDEF0App:
         self.set_widget_icon(paste_btn, "vstavka", (20, 20))
         paste_btn.pack(side=tk.LEFT, padx=2)
         self.apply_hover_effect(paste_btn)
+        # Добавляем tooltip с горячей клавишей
+        self._create_simple_tooltip(paste_btn, "Вставить (Ctrl+V)")
         self.paste_btn = paste_btn
         
         # Сохраняем ссылку на панель для обновления темы
@@ -3089,12 +3187,12 @@ class IDEF0App:
         """Масштабирование при Ctrl + колесо мыши с центрированием на курсоре"""
         # На Windows delta кратна 120
         delta = 1 if event.delta > 0 else -1
-        factor = 1.1 if delta > 0 else 0.9
+        factor = 1.05 if delta > 0 else 0.95  # Шаг 5%
         self.apply_zoom(factor, anchor_screen=(event.x, event.y))
 
     def on_ctrl_scroll_steps(self, steps):
         """Fallback для систем, где колесо приходит как Button-4/5"""
-        factor = 1.1 if steps > 0 else 0.9
+        factor = 1.05 if steps > 0 else 0.95  # Шаг 5%
         # Центр по текущему положению курсора относительно canvas
         try:
             x = self.canvas.winfo_pointerx() - self.canvas.winfo_rootx()
@@ -3103,6 +3201,80 @@ class IDEF0App:
             x, y = self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2
         self.apply_zoom(factor, anchor_screen=(x, y))
 
+    def validate_zoom_input(self, value):
+        """Валидация ввода для поля масштаба - разрешаем только цифры"""
+        if value == "":
+            return True  # Разрешаем пустое значение для редактирования
+        # Разрешаем только цифры (для свободного ввода во время редактирования)
+        # Проверку диапазона делаем в on_zoom_entry_change
+        return value.isdigit()
+    
+    def on_zoom_entry_change(self, event=None):
+        """Обработка изменения значения в поле масштаба"""
+        try:
+            value = self.zoom_entry.get().strip()
+            if value == "":
+                # Если поле пустое, восстанавливаем текущее значение
+                percent = int(round(self.zoom_scale * 100))
+                self.zoom_entry.delete(0, tk.END)
+                self.zoom_entry.insert(0, str(percent))
+                return
+            
+            percent = int(value)
+            # Ограничиваем диапазон
+            percent = max(20, min(400, percent))
+            scale = percent / 100.0
+            
+            # Устанавливаем новый масштаб
+            self.set_zoom(scale)
+        except ValueError:
+            # Если не число, восстанавливаем текущее значение
+            percent = int(round(self.zoom_scale * 100))
+            self.zoom_entry.delete(0, tk.END)
+            self.zoom_entry.insert(0, str(percent))
+    
+    def reset_zoom_to_100(self):
+        """Возврат масштаба к 100%"""
+        self.set_zoom(1.0)
+    
+    def set_zoom(self, scale):
+        """Устанавливает конкретное значение масштаба"""
+        # Ограничиваем масштаб
+        scale = max(0.2, min(4.0, scale))
+        
+        if abs(scale - self.zoom_scale) < 1e-6:
+            return  # Масштаб не изменился
+        
+        factor = scale / self.zoom_scale
+        
+        # Центрируем на центре видимой области
+        cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+        cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+        
+        # Масштабируем все элементы
+        self.canvas.scale("all", cx, cy, factor, factor)
+        
+        # Пересчёт границ прокрутки
+        bbox = self.canvas.bbox("all")
+        if bbox:
+            self.canvas.configure(scrollregion=bbox)
+        
+        # Обновляем масштаб и UI
+        self.zoom_scale = scale
+        percent = int(round(self.zoom_scale * 100))
+        if hasattr(self, "zoom_entry"):
+            try:
+                if self.zoom_entry.focus_get() != self.zoom_entry:
+                    self.zoom_entry.delete(0, tk.END)
+                    self.zoom_entry.insert(0, str(percent))
+            except tk.TclError:
+                # Если виджет не существует или не может получить фокус
+                self.zoom_entry.delete(0, tk.END)
+                self.zoom_entry.insert(0, str(percent))
+        if hasattr(self, "footer_label"):
+            base = "Диаграмма: Пример IDEF0 | Масштаб: "
+            self.footer_label.config(text=f"{base}{percent}%")
+    
     def apply_zoom(self, factor, anchor_screen=None):
         """Применяет масштабирование ко всем элементам canvas"""
         # Ограничиваем общий масштаб
@@ -3136,8 +3308,16 @@ class IDEF0App:
         # Обновляем текущий масштаб и UI
         self.zoom_scale = new_scale
         percent = int(round(self.zoom_scale * 100))
-        if hasattr(self, "zoom_label"):
-            self.zoom_label.config(text=f"{percent}%")
+        if hasattr(self, "zoom_entry"):
+            # Обновляем поле ввода, только если оно не в фокусе (чтобы не прерывать ввод)
+            try:
+                if self.zoom_entry.focus_get() != self.zoom_entry:
+                    self.zoom_entry.delete(0, tk.END)
+                    self.zoom_entry.insert(0, str(percent))
+            except tk.TclError:
+                # Если виджет не существует или не может получить фокус
+                self.zoom_entry.delete(0, tk.END)
+                self.zoom_entry.insert(0, str(percent))
         if hasattr(self, "footer_label"):
             base = "Диаграмма: Пример IDEF0 | Масштаб: "
             self.footer_label.config(text=f"{base}{percent}%")
@@ -4292,6 +4472,40 @@ class IDEF0App:
             self.error_tooltip.destroy()
             self.error_tooltip = None
     
+    def _create_simple_tooltip(self, widget, text):
+        """Создает простой tooltip для виджета"""
+        def on_enter(event):
+            tooltip = tk.Toplevel(self.root)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_attributes("-topmost", True)
+            # Используем темный фон для tooltip, чтобы он был виден на светлом фоне
+            bg_color = "#333333" if not self.is_dark_theme else "#1e293b"
+            fg_color = "#ffffff" if not self.is_dark_theme else "#f1f5f9"
+            label = tk.Label(
+                tooltip,
+                text=text,
+                bg=bg_color,
+                fg=fg_color,
+                font=("Segoe UI", 9),
+                relief="solid",
+                borderwidth=1,
+                padx=6,
+                pady=3
+            )
+            label.pack()
+            x = widget.winfo_rootx() + widget.winfo_width() // 2
+            y = widget.winfo_rooty() + widget.winfo_height() + 5
+            tooltip.geometry(f"+{x}+{y}")
+            widget.tooltip = tooltip
+        
+        def on_leave(event):
+            if hasattr(widget, 'tooltip'):
+                widget.tooltip.destroy()
+                del widget.tooltip
+        
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+    
     def draw_arrow(self, arrow_data):
         """
         Рисует стрелку на canvas
@@ -5240,30 +5454,75 @@ class IDEF0App:
             self.clipboard_type = "arrow"
     
     def cut_selected(self):
-        """Вырезает выбранный элемент (копирует и удаляет)"""
+        """Вырезает выбранный элемент (копирует в буфер обмена и удаляет)"""
         if not self.selected_block and not self.selected_arrow:
             return
+        
+        # Сохраняем состояние ДО удаления для возможности отмены
+        self.save_state()
         
         # Копируем в буфер обмена
         self.copy_selected()
         
         # Удаляем элемент
         if self.selected_block:
-            self.delete_block_direct(self.selected_block)
+            block_to_delete = self.selected_block
+            self.delete_block_direct(block_to_delete)
         elif self.selected_arrow:
-            self.delete_arrow_direct(self.selected_arrow)
+            arrow_to_delete = self.selected_arrow
+            self.delete_arrow_direct(arrow_to_delete)
         
-        # Сохраняем состояние для undo
+        # Сохраняем состояние ПОСЛЕ удаления для возможности отмены
         self.save_state()
     
     def paste_clipboard(self):
-        """Вставляет элемент из буфера обмена"""
+        """Вставляет элемент из буфера обмена в позицию курсора или около элемента"""
         if not self.clipboard or not self.clipboard_type:
             return
         
-        if self.clipboard_type == "block":
-            # Создаем новый блок со смещением
+        # Получаем позицию курсора на canvas
+        try:
+            # Получаем глобальные координаты курсора
+            cursor_x_root = self.root.winfo_pointerx()
+            cursor_y_root = self.root.winfo_pointery()
+            
+            # Получаем координаты canvas
+            canvas_x_root = self.canvas.winfo_rootx()
+            canvas_y_root = self.canvas.winfo_rooty()
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            # Проверяем, находится ли курсор на canvas
+            cursor_on_canvas = (canvas_x_root <= cursor_x_root <= canvas_x_root + canvas_width and
+                              canvas_y_root <= cursor_y_root <= canvas_y_root + canvas_height)
+            
+            if cursor_on_canvas:
+                # Преобразуем координаты экрана в координаты canvas
+                cursor_x = self.canvas.canvasx(cursor_x_root - canvas_x_root)
+                cursor_y = self.canvas.canvasy(cursor_y_root - canvas_y_root)
+                paste_x = cursor_x
+                paste_y = cursor_y
+            else:
+                # Если курсор вне canvas, используем смещение от исходного элемента
+                offset = 30
+                if self.clipboard_type == "block":
+                    paste_x = self.clipboard["x"] + offset
+                    paste_y = self.clipboard["y"] + offset
+                else:  # arrow
+                    paste_x = self.clipboard.get("display_x1", self.clipboard.get("x1", 0)) + offset
+                    paste_y = self.clipboard.get("display_y1", self.clipboard.get("y1", 0)) + offset
+        except:
+            # В случае ошибки используем смещение от исходного элемента
             offset = 30
+            if self.clipboard_type == "block":
+                paste_x = self.clipboard["x"] + offset
+                paste_y = self.clipboard["y"] + offset
+            else:  # arrow
+                paste_x = self.clipboard.get("display_x1", self.clipboard.get("x1", 0)) + offset
+                paste_y = self.clipboard.get("display_y1", self.clipboard.get("y1", 0)) + offset
+        
+        if self.clipboard_type == "block":
+            # Создаем новый блок в позиции курсора или со смещением
             block_data = self.clipboard
             new_block = Block(
                 block_id=None,  # Будет создан новый ID
@@ -5271,8 +5530,8 @@ class IDEF0App:
                 code=block_data["code"],
                 element_type=block_data["element_type"],
                 description=block_data["description"],
-                x=block_data["x"] + offset,
-                y=block_data["y"] + offset,
+                x=paste_x,
+                y=paste_y,
                 width=block_data["width"],
                 height=block_data["height"],
                 color=block_data["color"],
@@ -5317,33 +5576,67 @@ class IDEF0App:
                 "resize_handles": {}
             }
             
+            # Проверяем конфликт ID и сдвигаем при необходимости
+            conflicting_block = next(
+                (b for b in self.blocks 
+                 if b["model"].code == new_block.code and b["model"].id != new_block.id 
+                 and b["model"].parent_id == new_block.parent_id),
+                None
+            )
+            
+            if conflicting_block:
+                # Сдвигаем конфликтующий блок и всех его детей
+                self._shift_block_and_children(conflicting_block)
+            
             self.blocks.append(block_data_obj)
             self.make_block_interactive(block_data_obj)
             self.select_block(block_data_obj)
             
         elif self.clipboard_type == "arrow":
-            # Создаем новую стрелку со смещением
-            offset = 30
+            # Создаем новую стрелку в позиции курсора или со смещением
             arrow_data = self.clipboard
             
-            new_arrow_data = None
-            # Если есть координаты отображения, используем их
-            if arrow_data.get("display_x1") and arrow_data.get("display_y1") and \
-               arrow_data.get("display_x2") and arrow_data.get("display_y2"):
-                new_arrow_data = self.create_arrow_from_point_to_point(
-                    arrow_data["display_x1"] + offset,
-                    arrow_data["display_y1"] + offset,
-                    arrow_data["display_x2"] + offset,
-                    arrow_data["display_y2"] + offset
-                )
-            elif arrow_data.get("x1") and arrow_data.get("y1") and \
-                 arrow_data.get("x2") and arrow_data.get("y2"):
-                new_arrow_data = self.create_arrow_from_point_to_point(
-                    arrow_data["x1"] + offset,
-                    arrow_data["y1"] + offset,
-                    arrow_data["x2"] + offset,
-                    arrow_data["y2"] + offset
-                )
+            # Вычисляем смещение для второй точки стрелки
+            if cursor_on_canvas:
+                # Если вставляем в позицию курсора, сохраняем относительное смещение
+                original_x1 = arrow_data.get("display_x1", arrow_data.get("x1", 0))
+                original_y1 = arrow_data.get("display_y1", arrow_data.get("y1", 0))
+                original_x2 = arrow_data.get("display_x2", arrow_data.get("x2", 0))
+                original_y2 = arrow_data.get("display_y2", arrow_data.get("y2", 0))
+                
+                # Вычисляем смещение между точками
+                dx = original_x2 - original_x1
+                dy = original_y2 - original_y1
+                
+                # Новая позиция стрелки - курсор как первая точка
+                new_x1 = paste_x
+                new_y1 = paste_y
+                new_x2 = paste_x + dx
+                new_y2 = paste_y + dy
+            else:
+                # Если курсор вне canvas, используем смещение
+                offset = 30
+                if arrow_data.get("display_x1") and arrow_data.get("display_y1") and \
+                   arrow_data.get("display_x2") and arrow_data.get("display_y2"):
+                    new_x1 = arrow_data["display_x1"] + offset
+                    new_y1 = arrow_data["display_y1"] + offset
+                    new_x2 = arrow_data["display_x2"] + offset
+                    new_y2 = arrow_data["display_y2"] + offset
+                elif arrow_data.get("x1") and arrow_data.get("y1") and \
+                     arrow_data.get("x2") and arrow_data.get("y2"):
+                    new_x1 = arrow_data["x1"] + offset
+                    new_y1 = arrow_data["y1"] + offset
+                    new_x2 = arrow_data["x2"] + offset
+                    new_y2 = arrow_data["y2"] + offset
+                else:
+                    new_x1 = paste_x
+                    new_y1 = paste_y
+                    new_x2 = paste_x + 100  # Дефолтное смещение
+                    new_y2 = paste_y
+            
+            new_arrow_data = self.create_arrow_from_point_to_point(
+                new_x1, new_y1, new_x2, new_y2
+            )
             
             # Восстанавливаем свойства стрелки
             if new_arrow_data:
