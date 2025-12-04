@@ -720,6 +720,9 @@ class IDEF0App:
 
     def create_block_at_position(self, x, y):
         """Создает блок в указанной позиции с учетом текущего уровня"""
+        # Сохраняем состояние для undo ДО создания блока
+        self.save_state()
+        
         # Базовые размеры
         width, height = 150, 80
 
@@ -840,9 +843,6 @@ class IDEF0App:
         
         # Проверяем ошибки нумерации после создания блока
         self.root.after(100, self.check_numbering_errors)
-
-        # Сохраняем состояние для undo
-        self.save_state()
 
         print(f"Добавлен новый блок через drag-and-drop: {block_id}")
         print(f"Всего блоков: {len(self.blocks)}")
@@ -1034,6 +1034,9 @@ class IDEF0App:
     def end_resize(self, event, block_data):
         """Завершение изменения размера - применяем изменения"""
         if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
+            # Сохраняем состояние для undo ДО изменения размера
+            self.save_state()
+            
             resize_data = block_data["resize_data"]
             model = block_data["model"]
             handle_type = resize_data["handle_type"]
@@ -1108,9 +1111,6 @@ class IDEF0App:
             del block_data["resize_data"]
             self.resizing_block = None
             
-            # Сохраняем состояние для undo
-            self.save_state()
-            
             print(f"Блок {block_data['id']} изменен до размера {model.width}x{model.height}")
 
     def update_block_visual(self, block_data):
@@ -1156,6 +1156,9 @@ class IDEF0App:
             if self.current_mode == "draw_arrow":
                 return None
             if self.current_mode == "select":
+                # Сохраняем состояние для undo ДО начала перетаскивания
+                self.save_state()
+                
                 # Преобразуем координаты мыши в координаты холста
                 x = self.canvas.canvasx(event.x)
                 y = self.canvas.canvasy(event.y)
@@ -1211,9 +1214,6 @@ class IDEF0App:
             if self.dragging_block == block_data and "drag_data" in block_data:
                 del block_data["drag_data"]
                 self.dragging_block = None
-                
-                # Сохраняем состояние для undo
-                self.save_state()
                 
                 print(f"Блок {block_data['id']} перемещен в ({block_data['model'].x:.1f}, {block_data['model'].y:.1f})")
 
@@ -1498,7 +1498,11 @@ class IDEF0App:
         cache_key = f"{name}_{size[0]}x{size[1]}_{theme_key}{recolor_key}"
         if cache_key in self._icons:
             return self._icons[cache_key]
-        base_dir = os.path.dirname(__file__)
+        # Поддержка PyInstaller: в собранном exe используем sys._MEIPASS
+        if getattr(sys, 'frozen', False):
+            base_dir = sys._MEIPASS
+        else:
+            base_dir = os.path.dirname(__file__)
         candidates = [
             os.path.join(base_dir, "img", f"{name}.png"),
             os.path.join(base_dir, "img", f"{name} (1).png"),
@@ -2734,6 +2738,9 @@ class IDEF0App:
     
     def end_arrow_drag(self, event, arrow_data):
         """Завершение перетаскивания конца стрелки."""
+        # Сохраняем состояние для undo ДО изменения стрелки
+        self.save_state()
+        
         arrow = arrow_data["arrow"]
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
@@ -2808,9 +2815,6 @@ class IDEF0App:
         if "drag_data" in arrow_data:
             del arrow_data["drag_data"]
         self.dragging_arrow_end = None
-        
-        # Сохраняем состояние для undo
-        self.save_state()
     
     def show_attachment_points(self, exclude_block_id=None):
         """
@@ -3423,6 +3427,9 @@ class IDEF0App:
         
         # Завершаем рисование стрелки
         if self.current_mode == "draw_arrow" and self.arrow_drawing:
+            # Сохраняем состояние для undo ДО создания стрелки
+            self.save_state()
+            
             # Преобразуем координаты мыши в координаты холста
             x = self.canvas.canvasx(event.x)
             y = self.canvas.canvasy(event.y)
@@ -3484,9 +3491,6 @@ class IDEF0App:
             self.arrow_start_x = None
             self.arrow_start_y = None
             self.arrow_drawing = False
-            
-            # Сохраняем состояние для undo
-            self.save_state()
             
             # Переключаем режим на начальный (select) после создания стрелки
             self.enable_select_mode()
@@ -5486,14 +5490,14 @@ class IDEF0App:
         elif self.selected_arrow:
             arrow_to_delete = self.selected_arrow
             self.delete_arrow_direct(arrow_to_delete)
-        
-        # Сохраняем состояние ПОСЛЕ удаления для возможности отмены
-        self.save_state()
     
     def paste_clipboard(self):
         """Вставляет элемент из буфера обмена в позицию курсора или около элемента"""
         if not self.clipboard or not self.clipboard_type:
             return
+        
+        # Сохраняем состояние для undo ДО вставки
+        self.save_state()
         
         # Получаем позицию курсора на canvas
         try:
@@ -5664,9 +5668,6 @@ class IDEF0App:
                 new_arrow.bend_y = arrow_data.get("bend_y")
                 self.draw_arrow(new_arrow_data)
                 self.select_arrow(new_arrow_data)
-        
-        # Сохраняем состояние для undo
-        self.save_state()
     
     def show_documentation(self):
         """Показывает окно с документацией и горячими клавишами"""
