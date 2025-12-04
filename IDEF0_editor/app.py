@@ -4083,6 +4083,9 @@ class IDEF0App:
                         break
                 else:
                     print(f"Блок с id {block_id} не найден в списке блоков")
+                
+                # Устанавливаем фокус на canvas после переключения
+                self.canvas.focus_set()
 
     def navigate_to_block_level(self, block_id):
         """Переходит на уровень указанного блока"""
@@ -4101,6 +4104,9 @@ class IDEF0App:
             # Восстанавливаем состояние
             new_level_key = self.layer_manager.get_current_level_key()
             self.restore_level_state(new_level_key)
+            
+            # Устанавливаем фокус на canvas
+            self.canvas.focus_set()
             
             self.update_footer_info()
             print(f"Перешли на уровень блока {block_data['model'].code}")
@@ -4164,6 +4170,9 @@ class IDEF0App:
             # Если состояния нет, устанавливаем вид по умолчанию
             self.canvas.xview_moveto(0.5)
             self.canvas.yview_moveto(0.5)
+        
+        # Устанавливаем фокус на canvas после переключения слоя
+        self.canvas.focus_set()
 
     def refresh_canvas(self):
         """Обновляет холст в соответствии с текущим уровнем"""
@@ -4251,6 +4260,9 @@ class IDEF0App:
         if self.layers_panel_visible:
             self.update_layers_tree()
         
+        # Устанавливаем фокус на canvas
+        self.canvas.focus_set()
+        
         self.update_footer_info()
         print(f"Перешли на уровень детализации блока {self.selected_block['model'].code}")
 
@@ -4264,6 +4276,9 @@ class IDEF0App:
             # Обновляем панель слоев, если она открыта
             if self.layers_panel_visible:
                 self.update_layers_tree()
+            
+            # Устанавливаем фокус на canvas
+            self.canvas.focus_set()
             
             self.update_footer_info()
             print(f"Вернулись на уровень выше")
