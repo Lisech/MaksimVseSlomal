@@ -906,18 +906,24 @@ class IDEF0App:
         
         for handle_type, (x, y) in handles_positions.items():
             # Используем круглые маркеры (как у стрелок)
+            # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
             handle = self.canvas.create_oval(
                 x - size/2, y - size/2,
                 x + size/2, y + size/2,
-                fill=Colors.PRIMARY,
-                outline=Colors.SURFACE,
-                width=1,
+                fill=Colors.HANDLE_FILL,
+                outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
+                width=3 if self.is_dark_theme else 1,  # Более толстая обводка в темной теме
                 tags=("resize_handle", block_data["id"], f"handle_{handle_type}")
             )
             block_data["resize_handles"][handle_type] = handle
             
-            # ВАЖНО: Поднимаем маркер наверх, чтобы он был поверх блока
+            # ВАЖНО: Поднимаем маркер наверх, чтобы он был поверх блока и всех других элементов
             self.canvas.tag_raise(handle)
+            # Поднимаем еще выше, чтобы быть уверенными
+            try:
+                self.canvas.tag_raise(handle, "all")
+            except tk.TclError:
+                pass
             
             # Привязываем обработчики событий для маркера
             self.canvas.tag_bind(handle, "<ButtonPress-1>", 
@@ -927,10 +933,12 @@ class IDEF0App:
             self.canvas.tag_bind(handle, "<ButtonRelease-1>", 
                                lambda e, b=block_data: self.end_resize(e, b))
         
-        # ВАЖНО: Поднимаем все маркеры наверх в конце
+        # ВАЖНО: Поднимаем все маркеры наверх в конце, чтобы они были поверх всех элементов
         for handle_id in block_data.get("resize_handles", {}).values():
             try:
                 self.canvas.tag_raise(handle_id)
+                # Поднимаем еще выше для гарантии
+                self.canvas.tag_raise(handle_id, "all")
             except tk.TclError:
                 pass
 
@@ -1284,10 +1292,12 @@ class IDEF0App:
         
         # Создаем маркеры изменения размера
         self.create_resize_handles(block_data)
-        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока
+        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока и всех элементов
         for handle_id in block_data.get("resize_handles", {}).values():
             try:
                 self.canvas.tag_raise(handle_id)
+                # Поднимаем еще выше для гарантии видимости
+                self.canvas.tag_raise(handle_id, "all")
             except tk.TclError:
                 pass
 
@@ -2527,12 +2537,14 @@ class IDEF0App:
         handle_size = 12  # Размер маркеров стрелок (в 1.5 раза больше, чем было)
         
         # Маркер на начале стрелки
+        outline_color = Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE
+        outline_width = 3 if self.is_dark_theme else 1
         handle_start = self.canvas.create_oval(
             arrow.display_x1 - handle_size, arrow.display_y1 - handle_size,
             arrow.display_x1 + handle_size, arrow.display_y1 + handle_size,
-            fill=Colors.PRIMARY,
-            outline=Colors.SURFACE,
-            width=1,
+            fill=Colors.HANDLE_FILL,
+            outline=outline_color,
+            width=outline_width,
             tags=("arrow_drag_handle", "arrow_handle_start", arrow.id)
         )
         
@@ -2540,9 +2552,9 @@ class IDEF0App:
         handle_end = self.canvas.create_oval(
             arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
             arrow.display_x2 + handle_size, arrow.display_y2 + handle_size,
-            fill=Colors.PRIMARY,
-            outline=Colors.SURFACE,
-            width=1,
+            fill=Colors.HANDLE_FILL,
+            outline=outline_color,
+            width=outline_width,
             tags=("arrow_drag_handle", "arrow_handle_end", arrow.id)
         )
         
@@ -2854,13 +2866,14 @@ class IDEF0App:
                         )
                     else:
                         # Используем круг как запасной вариант
+                        # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
                         size = self.attachment_point_size / 2
                         point_id = self.canvas.create_oval(
                             px - size, py - size,
                             px + size, py + size,
-                            fill=Colors.PRIMARY,
-                            outline=Colors.SURFACE,
-                            width=2,
+                            fill=Colors.HANDLE_FILL,
+                            outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
+                            width=3 if self.is_dark_theme else 2,  # Более толстая обводка в темной теме
                             tags=("attachment_point", block_data["id"], side, str(point_index))
                         )
                     
@@ -3088,6 +3101,8 @@ class IDEF0App:
         new_fill = to_palette.get("BLOCK_FILL", Colors.BLOCK_FILL)
         new_border = to_palette.get("BLOCK_BORDER", Colors.BLOCK_BORDER)
         new_text = to_palette.get("TEXT_PRIMARY", Colors.TEXT_PRIMARY)
+        new_handle_fill = to_palette.get("HANDLE_FILL", Colors.HANDLE_FILL)
+        new_surface = to_palette.get("SURFACE", Colors.SURFACE)
 
         for block_data in self.blocks:
             rect_id = block_data["rect_id"]
@@ -3102,12 +3117,35 @@ class IDEF0App:
             if self.selected_block == block_data:
                 self.canvas.itemconfig(rect_id, outline=Colors.PRIMARY, width=3)
                 # Пересоздаем маркеры resize, чтобы цвета соответствовали теме
+                # Важно: Colors.HANDLE_FILL уже обновлен в toggle_theme
                 self.delete_resize_handles(block_data)
                 self.create_resize_handles(block_data)
+                # Убеждаемся, что маркеры видны - поднимаем их наверх
+                if block_data.get("resize_handles"):
+                    for handle_id in block_data["resize_handles"].values():
+                        try:
+                            self.canvas.tag_raise(handle_id)
+                        except tk.TclError:
+                            pass
             else:
                 if current_outline == from_border:
                     self.canvas.itemconfig(rect_id, outline=new_border,
                                            width=block_data["model"].border_width)
+            
+            # Обновляем все существующие маркеры resize для невыбранных блоков
+            # (для выбранного блока маркеры уже пересозданы выше)
+            if block_data.get("resize_handles") and self.selected_block != block_data:
+                outline_color = new_text if self.is_dark_theme else new_surface
+                outline_width = 3 if self.is_dark_theme else 1  # Более толстая обводка в темной теме
+                for handle_id in block_data["resize_handles"].values():
+                    try:
+                        self.canvas.itemconfig(handle_id, fill=new_handle_fill, 
+                                             outline=outline_color, width=outline_width)
+                        # Поднимаем маркер наверх после обновления
+                        self.canvas.tag_raise(handle_id)
+                        self.canvas.tag_raise(handle_id, "all")
+                    except tk.TclError:
+                        pass
 
             # Обновляем цвет текста блока
             self.canvas.itemconfig(text_id, fill=new_text)
@@ -3118,6 +3156,8 @@ class IDEF0App:
             return
         
         new_arrow_color = to_palette.get("ARROW_COLOR", Colors.ARROW_COLOR)
+        new_handle_fill = to_palette.get("HANDLE_FILL", Colors.HANDLE_FILL)
+        new_surface = to_palette.get("SURFACE", Colors.SURFACE)
         
         for arrow_data in self.arrows:
             arrow = arrow_data["arrow"]
@@ -3127,6 +3167,41 @@ class IDEF0App:
             # Перерисовываем стрелку с новым цветом
             if arrow_data.get("line_id") or arrow_data.get("arrowhead_id"):
                 self.draw_arrow(arrow_data)
+            
+            # Обновляем маркеры стрелок, если они есть
+            if arrow.id in self.arrow_drag_handles:
+                handles = self.arrow_drag_handles[arrow.id]
+                new_text = to_palette.get("TEXT_PRIMARY", Colors.TEXT_PRIMARY)
+                outline_color = new_text if self.is_dark_theme else new_surface
+                outline_width = 3 if self.is_dark_theme else 1
+                if handles.get("start"):
+                    self.canvas.itemconfig(handles["start"], fill=new_handle_fill, 
+                                         outline=outline_color, width=outline_width)
+                    self.canvas.tag_raise(handles["start"], "all")
+                if handles.get("end"):
+                    self.canvas.itemconfig(handles["end"], fill=new_handle_fill, 
+                                         outline=outline_color, width=outline_width)
+                    self.canvas.tag_raise(handles["end"], "all")
+        
+        # Обновляем точки прикрепления, если они видимы
+        if hasattr(self, "attachment_points") and self.attachment_points:
+            new_handle_fill = to_palette.get("HANDLE_FILL", Colors.HANDLE_FILL)
+            new_text = to_palette.get("TEXT_PRIMARY", Colors.TEXT_PRIMARY)
+            new_surface = to_palette.get("SURFACE", Colors.SURFACE)
+            for point_id in self.attachment_points:
+                try:
+                    item_type = self.canvas.type(point_id)
+                    if item_type == "oval":
+                        # Обновляем цвет овала (точки прикрепления)
+                        outline_color = new_text if self.is_dark_theme else new_surface
+                        outline_width = 3 if self.is_dark_theme else 2  # Более толстая обводка в темной теме
+                        self.canvas.itemconfig(point_id, fill=new_handle_fill, 
+                                             outline=outline_color, width=outline_width)
+                        # Поднимаем точку наверх для видимости
+                        self.canvas.tag_raise(point_id)
+                        self.canvas.tag_raise(point_id, "all")
+                except tk.TclError:
+                    pass
 
     def _update_theme_for_widget(self, widget, from_palette, to_palette):
         """
@@ -3690,11 +3765,41 @@ class IDEF0App:
         for i in range(top, bottom, minor_step):
             self.canvas.create_line(left, i, right, i, fill=Colors.GRID, width=1, tags='grid')
 
-        # Major grid - немного темнее
+        # Major grid - более заметные линии для больших квадратов
+        major_grid_width = 2 if self.is_dark_theme else 1  # Толще в темной теме для лучшей видимости
         for i in range(left, right, major_step):
-            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=1, tags='grid')
+            self.canvas.create_line(i, top, i, bottom, fill=Colors.GRID_STRONG, width=major_grid_width, tags='grid')
         for i in range(top, bottom, major_step):
-            self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=1, tags='grid')
+            self.canvas.create_line(left, i, right, i, fill=Colors.GRID_STRONG, width=major_grid_width, tags='grid')
+
+        # Малые квадраты внутри больших квадратов сетки (только в темной теме)
+        # В каждом большом квадрате должно быть 25 малых (5x5 сетка)
+        if self.is_dark_theme:
+            grid_square_color = "#002137"
+            small_square_size = major_step // 5  # Размер малого квадрата (100 / 5 = 20 пикселей)
+            
+            # Проходим по всем большим квадратам сетки
+            for major_x in range(left, right, major_step):
+                for major_y in range(top, bottom, major_step):
+                    # В каждом большом квадрате создаем 25 малых (5x5)
+                    for i in range(5):
+                        for j in range(5):
+                            # Координаты левого верхнего угла малого квадрата
+                            small_x1 = major_x + i * small_square_size
+                            small_y1 = major_y + j * small_square_size
+                            # Координаты правого нижнего угла малого квадрата
+                            small_x2 = small_x1 + small_square_size
+                            small_y2 = small_y1 + small_square_size
+                            
+                            # Создаем маленький квадрат (пустой внутри, только контур)
+                            self.canvas.create_rectangle(
+                                small_x1, small_y1,
+                                small_x2, small_y2,
+                                fill='',
+                                outline=grid_square_color,
+                                width=1,
+                                tags='grid'
+                            )
 
         # Отправляем сетку под все элементы, чтобы она не перекрывала объекты
         try:
