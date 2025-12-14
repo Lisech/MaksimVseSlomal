@@ -2054,6 +2054,8 @@ class IDEF0App:
 
     def show_block_action_buttons(self, block_data):
         """Создаёт три кнопки справа от выбранного блока на холсте."""
+        # Кнопки действий отключены
+        return
         if not hasattr(self, "canvas"):
             return
 
@@ -2191,10 +2193,78 @@ class IDEF0App:
         self.block_action_buttons = []
 
     def copy_block(self, block_data):
-        """Создаёт копию блока рядом с исходным."""
+        """Создаёт копию блока рядом с исходным с новым ID."""
+        # Сохраняем состояние для undo ДО создания блока
+        self.save_state()
+        
         model = block_data["model"]
         offset = 30
-        self.create_block_at_position(model.x + offset, model.y + offset)
+        
+        # Создаем новый уникальный ID
+        block_id = f"block_{self.next_block_id}"
+        self.next_block_id += 1
+        
+        # Создаем копию блока с новым ID
+        new_block = Block(
+            block_id=block_id,
+            name=model.name,
+            code=model.code,
+            element_type=model.element_type,
+            description=model.description,
+            x=model.x + offset,
+            y=model.y + offset,
+            width=model.width,
+            height=model.height,
+            color=model.color,
+            border_width=model.border_width,
+            parent_id=model.parent_id
+        )
+        
+        # Создаем визуальное представление
+        x1 = new_block.x - new_block.width / 2
+        y1 = new_block.y - new_block.height / 2
+        x2 = new_block.x + new_block.width / 2
+        y2 = new_block.y + new_block.height / 2
+        
+        rect = self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill=new_block.color,
+            outline=Colors.BLOCK_BORDER,
+            width=new_block.border_width,
+            tags=("block", block_id)
+        )
+        
+        formatted_text = self.format_block_text(new_block.name, new_block.width)
+        text = self.canvas.create_text(
+            new_block.x, new_block.y,
+            text=formatted_text,
+            font=("Segoe UI", 10),
+            fill=Colors.TEXT_PRIMARY,
+            justify="center",
+            width=new_block.width - 10,
+            tags=("block_text", block_id)
+        )
+        
+        new_block_data = {
+            "id": block_id,
+            "model": new_block,
+            "rect_id": rect,
+            "text_id": text,
+            "resize_handles": {}
+        }
+        
+        self.blocks.append(new_block_data)
+        
+        # Делаем блок перемещаемым и выбираемым
+        self.make_block_interactive(new_block_data)
+        
+        # Автоматически выбираем новый блок
+        self.select_block(new_block_data)
+        
+        # Проверяем ошибки нумерации после создания блока
+        self.root.after(100, self.check_numbering_errors)
+        
+        return new_block_data
 
     def delete_block_direct(self, block_data):
         """Удаление конкретного блока по кнопке (не затрагивает выбранную стрелку)."""
@@ -2404,6 +2474,8 @@ class IDEF0App:
     
     def show_arrow_action_buttons(self, arrow_data):
         """Показывает кнопки действий для выбранной стрелки."""
+        # Кнопки действий отключены
+        return
         if not hasattr(self, "canvas"):
             return
         
@@ -5746,10 +5818,68 @@ class IDEF0App:
         if self.clipboard_type == "block":
             # Создаем новый блок в позиции курсора или со смещением
             block_data = self.clipboard
+            
+            # Генерируем новый код на основе текущего уровня
+            parent_id = self.layer_manager.get_current_parent_id()
+            current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+            
+            if parent_id:
+                # Находим родительский блок для наследования кода
+                parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id), None)
+                if parent_block:
+                    # Получаем все блоки на этом уровне с тем же родителем и находим первый свободный номер
+                    sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
+                    used_numbers = set()
+                    for block_data_item in sibling_blocks:
+                        code_parts = block_data_item["model"].code.split(".")
+                        if len(code_parts) > 1:
+                            try:
+                                num = int(code_parts[-1])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    # Находим первый свободный номер
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    new_code = f"{parent_block.code}.{code_num}"
+                else:
+                    # Находим первый свободный номер на корневом уровне
+                    used_numbers = set()
+                    for block_data_item in current_blocks:
+                        code = block_data_item.code
+                        if code.startswith("A") and "." not in code:
+                            try:
+                                num = int(code[1:])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    # Находим первый свободный номер
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    new_code = f"A{code_num}"
+            else:
+                # Корневой уровень - находим первый свободный номер
+                used_numbers = set()
+                for block_data_item in current_blocks:
+                    code = block_data_item.code
+                    if code.startswith("A") and "." not in code:
+                        try:
+                            num = int(code[1:])
+                            used_numbers.add(num)
+                        except ValueError:
+                            pass
+                # Находим первый свободный номер
+                code_num = 1
+                while code_num in used_numbers:
+                    code_num += 1
+                new_code = f"A{code_num}"
+            
             new_block = Block(
                 block_id=None,  # Будет создан новый ID
-                name=block_data["name"],
-                code=block_data["code"],
+                name=f"Блок {new_code}"[:80],  # Генерируем название на основе нового кода
+                code=new_code,  # Используем новый сгенерированный код
                 element_type=block_data["element_type"],
                 description=block_data["description"],
                 x=paste_x,
@@ -5758,7 +5888,7 @@ class IDEF0App:
                 height=block_data["height"],
                 color=block_data["color"],
                 border_width=block_data["border_width"],
-                parent_id=block_data.get("parent_id")
+                parent_id=parent_id  # Используем текущий parent_id, а не из буфера
             )
             
             # Создаем визуальное представление
@@ -5797,18 +5927,6 @@ class IDEF0App:
                 "text_id": text,
                 "resize_handles": {}
             }
-            
-            # Проверяем конфликт ID и сдвигаем при необходимости
-            conflicting_block = next(
-                (b for b in self.blocks 
-                 if b["model"].code == new_block.code and b["model"].id != new_block.id 
-                 and b["model"].parent_id == new_block.parent_id),
-                None
-            )
-            
-            if conflicting_block:
-                # Сдвигаем конфликтующий блок и всех его детей
-                self._shift_block_and_children(conflicting_block)
             
             self.blocks.append(block_data_obj)
             self.make_block_interactive(block_data_obj)
