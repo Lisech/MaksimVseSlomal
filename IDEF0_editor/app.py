@@ -672,11 +672,21 @@ class IDEF0App:
         self.drag_from_sidebar = True
         self.canvas.configure(cursor="crosshair")
         
-        # Создаем превью блока
-        x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-        y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+        # Получаем координаты курсора на canvas
+        # Событие приходит от кнопки, поэтому используем глобальные координаты
+        canvas_x_root = self.canvas.winfo_rootx()
+        canvas_y_root = self.canvas.winfo_rooty()
+        x = self.canvas.canvasx(event.x_root - canvas_x_root)
+        y = self.canvas.canvasy(event.y_root - canvas_y_root)
         
-        width, height = 150, 80
+        # Размеры превью с учетом текущего масштаба canvas
+        # Блоки создаются с размерами 150x80, но визуально масштабируются
+        # Поэтому превью должно иметь те же визуальные размеры
+        base_width, base_height = 150, 80
+        width = base_width * self.zoom_scale
+        height = base_height * self.zoom_scale
+        
+        # Создаем превью так, чтобы курсор был в центре блока
         self.drag_preview = self.canvas.create_rectangle(
             x - width / 2, y - height / 2,
             x + width / 2, y + height / 2,
@@ -690,12 +700,19 @@ class IDEF0App:
     def drag_from_sidebar(self, event):
         """Перетаскивание из панели инструментов"""
         if self.drag_from_sidebar and self.drag_preview:
-            # Преобразуем координаты мыши в координаты холста
-            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            # Получаем координаты курсора на canvas
+            # Событие приходит от кнопки или canvas, используем глобальные координаты
+            canvas_x_root = self.canvas.winfo_rootx()
+            canvas_y_root = self.canvas.winfo_rooty()
+            x = self.canvas.canvasx(event.x_root - canvas_x_root)
+            y = self.canvas.canvasy(event.y_root - canvas_y_root)
             
-            width, height = 150, 80
-            # Обновляем позицию превью
+            # Размеры превью с учетом текущего масштаба canvas
+            base_width, base_height = 150, 80
+            width = base_width * self.zoom_scale
+            height = base_height * self.zoom_scale
+            
+            # Обновляем позицию превью так, чтобы курсор оставался в центре блока
             self.canvas.coords(
                 self.drag_preview,
                 x - width / 2, y - height / 2,
@@ -705,9 +722,11 @@ class IDEF0App:
     def end_drag_from_sidebar(self, event):
         """Завершение перетаскивания из панели инструментов"""
         if self.drag_from_sidebar and self.drag_preview:
-            # Преобразуем координаты мыши в координаты холста
-            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            # Получаем координаты курсора на canvas (используем тот же метод, что и в drag_from_sidebar)
+            canvas_x_root = self.canvas.winfo_rootx()
+            canvas_y_root = self.canvas.winfo_rooty()
+            x = self.canvas.canvasx(event.x_root - canvas_x_root)
+            y = self.canvas.canvasy(event.y_root - canvas_y_root)
             
             # Удаляем превью
             self.canvas.delete(self.drag_preview)
@@ -715,7 +734,7 @@ class IDEF0App:
             self.drag_from_sidebar = False
             self.canvas.configure(cursor="")
             
-            # Создаем новый блок в точке отпускания
+            # Создаем новый блок в точке отпускания (точно там, где было превью)
             self.create_block_at_position(x, y)
 
     def create_block_at_position(self, x, y):
@@ -833,6 +852,17 @@ class IDEF0App:
 
         self.blocks.append(block_data)
 
+        # Применяем текущий масштаб к новому блоку, чтобы он визуально соответствовал другим блокам
+        # canvas.scale("all") масштабирует все элементы, но новые элементы создаются после масштабирования
+        # Поэтому нужно применить текущий масштаб к новому блоку
+        if self.zoom_scale != 1.0:
+            # Используем центр видимой области как точку масштабирования (как в set_zoom и apply_zoom)
+            cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+            cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+            # Масштабируем новый блок до текущего масштаба
+            # Используем все элементы блока (rect и text) через тег
+            self.canvas.scale(block_id, cx, cy, self.zoom_scale, self.zoom_scale)
+
         # Делаем блок перемещаемым и выбираемым
         self.make_block_interactive(block_data)
 
@@ -896,13 +926,51 @@ class IDEF0App:
         model = block_data["model"]
         size = self.resize_handle_size
         
-        # Угловые маркеры
-        handles_positions = {
-            "nw": (model.x - model.width/2, model.y - model.height/2),
-            "ne": (model.x + model.width/2, model.y - model.height/2),
-            "sw": (model.x - model.width/2, model.y + model.height/2),
-            "se": (model.x + model.width/2, model.y + model.height/2)
-        }
+        # Получаем актуальные визуальные координаты блока с canvas (с учетом масштабирования)
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                # Получаем координаты прямоугольника с canvas
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    # coords = [x1, y1, x2, y2]
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_x = (visual_x1 + visual_x2) / 2
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    visual_width = visual_x2 - visual_x1
+                    visual_height = visual_y2 - visual_y1
+                    
+                    # Используем визуальные координаты для позиционирования маркеров
+                    handles_positions = {
+                        "nw": (visual_x1, visual_y1),
+                        "ne": (visual_x2, visual_y1),
+                        "sw": (visual_x1, visual_y2),
+                        "se": (visual_x2, visual_y2)
+                    }
+                else:
+                    # Fallback на координаты модели, если не удалось получить визуальные
+                    handles_positions = {
+                        "nw": (model.x - model.width/2, model.y - model.height/2),
+                        "ne": (model.x + model.width/2, model.y - model.height/2),
+                        "sw": (model.x - model.width/2, model.y + model.height/2),
+                        "se": (model.x + model.width/2, model.y + model.height/2)
+                    }
+            else:
+                # Fallback на координаты модели
+                handles_positions = {
+                    "nw": (model.x - model.width/2, model.y - model.height/2),
+                    "ne": (model.x + model.width/2, model.y - model.height/2),
+                    "sw": (model.x - model.width/2, model.y + model.height/2),
+                    "se": (model.x + model.width/2, model.y + model.height/2)
+                }
+        except (tk.TclError, AttributeError, IndexError):
+            # Fallback на координаты модели в случае ошибки
+            handles_positions = {
+                "nw": (model.x - model.width/2, model.y - model.height/2),
+                "ne": (model.x + model.width/2, model.y - model.height/2),
+                "sw": (model.x - model.width/2, model.y + model.height/2),
+                "se": (model.x + model.width/2, model.y + model.height/2)
+            }
         
         for handle_type, (x, y) in handles_positions.items():
             # Используем круглые маркеры (как у стрелок)
@@ -3405,8 +3473,13 @@ class IDEF0App:
         cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
         cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
         
-        # Масштабируем все элементы
+        # Масштабируем все элементы (кроме маркеров, которые пересоздаются)
+        # Исключаем маркеры из масштабирования, чтобы они не дублировались
         self.canvas.scale("all", cx, cy, factor, factor)
+        
+        # Обновляем координаты модели блоков после масштабирования
+        # чтобы они соответствовали визуальным координатам на canvas
+        self._sync_block_model_coordinates()
         
         # Пересчёт границ прокрутки
         bbox = self.canvas.bbox("all")
@@ -3415,6 +3488,16 @@ class IDEF0App:
         
         # Обновляем масштаб и UI
         self.zoom_scale = scale
+        
+        # Обновляем маркеры изменения размера для выбранного блока
+        if self.selected_block:
+            self.delete_resize_handles(self.selected_block)
+            self.create_resize_handles(self.selected_block)
+        
+        # Обновляем точки прикрепления, если они отображаются
+        if hasattr(self, 'attachment_points') and self.attachment_points:
+            self.update_attachment_points()
+        
         percent = int(round(self.zoom_scale * 100))
         if hasattr(self, "zoom_entry"):
             try:
@@ -3428,6 +3511,35 @@ class IDEF0App:
         if hasattr(self, "footer_label"):
             base = "Диаграмма: Пример IDEF0 | Масштаб: "
             self.footer_label.config(text=f"{base}{percent}%")
+    
+    def _sync_block_model_coordinates(self):
+        """Синхронизирует координаты модели блоков с визуальными координатами на canvas"""
+        # Получаем блоки текущего уровня
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        current_block_ids = {block.id for block in current_blocks}
+        
+        for block_data in self.blocks:
+            if block_data["model"].id not in current_block_ids:
+                continue  # Пропускаем блоки не текущего уровня
+            
+            model = block_data["model"]
+            rect_id = block_data.get("rect_id")
+            
+            if rect_id:
+                try:
+                    # Получаем визуальные координаты блока с canvas
+                    coords = self.canvas.coords(rect_id)
+                    if len(coords) >= 4:
+                        visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                        # Обновляем только позицию модели на основе визуальных координат
+                        # Размеры остаются фиксированными в логических единицах (не зависят от масштаба)
+                        model.x = (visual_x1 + visual_x2) / 2
+                        model.y = (visual_y1 + visual_y2) / 2
+                        # НЕ обновляем width и height - они должны оставаться фиксированными
+                        # Визуальные размеры будут масштабироваться автоматически через canvas.scale
+                except (tk.TclError, IndexError):
+                    # Если не удалось получить координаты, оставляем как есть
+                    pass
     
     def apply_zoom(self, factor, anchor_screen=None):
         """Применяет масштабирование ко всем элементам canvas"""
@@ -3451,6 +3563,10 @@ class IDEF0App:
         # Масштабируем все элементы, включая сетку
         self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
 
+        # Обновляем координаты модели блоков после масштабирования
+        # чтобы они соответствовали визуальным координатам на canvas
+        self._sync_block_model_coordinates()
+
         # Перерисовываем/обновляем элементы, чувствительные к масштабу
         # Текст в Tk не масштабируется шрифтом — оставляем как есть для простоты
 
@@ -3461,6 +3577,16 @@ class IDEF0App:
 
         # Обновляем текущий масштаб и UI
         self.zoom_scale = new_scale
+        
+        # Обновляем маркеры изменения размера для выбранного блока
+        if self.selected_block:
+            self.delete_resize_handles(self.selected_block)
+            self.create_resize_handles(self.selected_block)
+        
+        # Обновляем точки прикрепления, если они отображаются
+        if hasattr(self, 'attachment_points') and self.attachment_points:
+            self.update_attachment_points()
+        
         percent = int(round(self.zoom_scale * 100))
         if hasattr(self, "zoom_entry"):
             # Обновляем поле ввода, только если оно не в фокусе (чтобы не прерывать ввод)
