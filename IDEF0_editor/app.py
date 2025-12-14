@@ -324,6 +324,10 @@ class IDEF0App:
         
         # Универсальный обработчик для всех клавиш (резервный)
         self.root.bind_all("<KeyPress>", universal_key_handler, add='+')
+
+        # Ctrl+S - Сохранение
+        self.root.bind_all("<Control-s>", lambda e: self.save_file())
+        self.root.bind_all("<Control-S>", lambda e: self.save_file())
         
         # Привязываем к canvas для дополнительной надежности
         if hasattr(self, 'canvas'):
@@ -5484,12 +5488,35 @@ class IDEF0App:
         """Сохраняет файл с выбором пути"""
         file_path = filedialog.asksaveasfilename(
             defaultextension=".json",
-            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+            filetypes=[
+                ("IDEF0 проект (*.json)", "*.json"),
+                ("Изображение PNG (*.png)", "*.png"),
+                ("Все файлы", "*.*")
+            ]
         )
-        if file_path:
+        if not file_path:
+            return
+
+        ext = os.path.splitext(file_path)[1].lower()
+
+        if ext == ".json":
             self.current_file_path = file_path
             self._save_to_file(file_path)
-    
+
+        elif ext == ".png":
+            messagebox.showerror(
+                "Ошибка",
+                "eror"
+            )
+            return
+            self.export_canvas_full_png(file_path)
+
+        else:
+            messagebox.showerror(
+                "Ошибка",
+                "Неподдерживаемый формат файла"
+            )
+   
     def _save_to_file(self, file_path):
         """Сохраняет данные в файл"""
         try:
