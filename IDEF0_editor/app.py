@@ -1175,6 +1175,16 @@ class IDEF0App:
         self.current_mode = "select"
         self.canvas.configure(cursor="")
     
+    def delete_arrow_button(self, block_data, side):
+        """Удаляет кнопку создания стрелки от указанной стороны блока"""
+        if "arrow_buttons" in block_data and side in block_data["arrow_buttons"]:
+            button_id = block_data["arrow_buttons"][side]
+            try:
+                self.canvas.delete(button_id)
+            except tk.TclError:
+                pass
+            del block_data["arrow_buttons"][side]
+    
     def delete_arrow_buttons(self, block_data):
         """Удаляет кнопки создания стрелок"""
         if "arrow_buttons" in block_data:
@@ -5644,6 +5654,12 @@ class IDEF0App:
             print(f"Ошибка: Блок {to_block_id} не найден!")
             return None
         
+        # Удаляем кнопки от соответствующих сторон блоков, если стрелка создается вручную
+        if from_block_data and from_side in ["left", "right"]:
+            self.delete_arrow_button(from_block_data, from_side)
+        if to_block_data and to_side in ["left", "right"]:
+            self.delete_arrow_button(to_block_data, to_side)
+        
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
@@ -5695,6 +5711,10 @@ class IDEF0App:
             else:
                 from_side = "bottom" if dy > 0 else "top"
         
+        # Удаляем кнопку от соответствующей стороны блока, если стрелка создается вручную
+        if from_side in ["left", "right"]:
+            self.delete_arrow_button(from_block_data, from_side)
+        
         arrow = Arrow(
             arrow_id=arrow_id,
             from_block_id=from_block_id,
@@ -5741,6 +5761,10 @@ class IDEF0App:
                 to_side = "left" if dx > 0 else "right"
             else:
                 to_side = "top" if dy > 0 else "bottom"
+        
+        # Удаляем кнопку к соответствующей стороне блока, если стрелка создается вручную
+        if to_side in ["left", "right"]:
+            self.delete_arrow_button(to_block_data, to_side)
         
         arrow = Arrow(
             arrow_id=arrow_id,
