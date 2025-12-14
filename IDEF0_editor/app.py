@@ -2827,6 +2827,9 @@ class IDEF0App:
         if "drag_data" in arrow_data:
             del arrow_data["drag_data"]
         self.dragging_arrow_end = None
+        
+        # Проверяем ошибки валидации после изменения стрелки
+        self.check_numbering_errors()
     
     def show_attachment_points(self, exclude_block_id=None):
         """
@@ -4404,21 +4407,28 @@ class IDEF0App:
         self.check_numbering_errors()
     
     def check_numbering_errors(self):
-        """Проверяет пропуски в нумерации блоков и показывает/скрывает индикатор ошибки"""
+        """Проверяет пропуски в нумерации блоков и валидацию стрелок, показывает/скрывает индикатор ошибки"""
         missing_codes = self._find_missing_codes()
+        blocks_without_arrows = self._find_blocks_without_arrows()
         
-        if missing_codes:
+        # Объединяем все ошибки
+        has_errors = missing_codes or blocks_without_arrows
+        
+        if has_errors:
             # Показываем индикатор ошибки
             if hasattr(self, 'error_indicator_canvas'):
                 self.error_indicator_canvas.place(relx=1, rely=1, x=-40, y=-30, anchor='se')
-                # Сохраняем список отсутствующих кодов для tooltip
+                # Сохраняем списки ошибок для tooltip
                 self.missing_codes = missing_codes
+                self.blocks_without_arrows = blocks_without_arrows
         else:
             # Скрываем индикатор ошибки
             if hasattr(self, 'error_indicator_canvas'):
                 self.error_indicator_canvas.place_forget()
                 if hasattr(self, 'missing_codes'):
                     self.missing_codes = []
+                if hasattr(self, 'blocks_without_arrows'):
+                    self.blocks_without_arrows = []
     
     def _find_missing_codes(self):
         """Находит пропуски в нумерации блоков"""
@@ -4556,9 +4566,54 @@ class IDEF0App:
         
         return ", ".join(result_parts)
     
+    def _find_blocks_without_arrows(self):
+        """Находит блоки, у которых отсутствуют стрелки слева или справа"""
+        blocks_without_arrows = []
+        
+        # Получаем блоки текущего уровня
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        
+        for block in current_blocks:
+            block_id = block.id
+            has_left_arrow = False
+            has_right_arrow = False
+            
+            # Проверяем все стрелки, связанные с этим блоком
+            for arrow_data in self.arrows:
+                arrow = arrow_data["arrow"]
+                
+                # Проверяем, входит ли стрелка слева (to_side="left") - это вход
+                if arrow.to_block_id == block_id and arrow.to_side == "left":
+                    has_left_arrow = True
+                
+                # Проверяем, выходит ли стрелка справа (from_side="right") - это выход
+                if arrow.from_block_id == block_id and arrow.from_side == "right":
+                    has_right_arrow = True
+                
+                # Если обе стрелки найдены, можно прекратить проверку для этого блока
+                if has_left_arrow and has_right_arrow:
+                    break
+            
+            # Если отсутствует хотя бы одна стрелка, добавляем блок в список
+            if not has_left_arrow or not has_right_arrow:
+                missing_sides = []
+                if not has_left_arrow:
+                    missing_sides.append("вход")
+                if not has_right_arrow:
+                    missing_sides.append("выход")
+                blocks_without_arrows.append({
+                    "block": block,
+                    "missing_sides": missing_sides
+                })
+        
+        return blocks_without_arrows
+    
     def _show_error_tooltip(self, event):
         """Показывает tooltip с информацией об ошибке"""
-        if not hasattr(self, 'missing_codes') or not self.missing_codes:
+        missing_codes = getattr(self, 'missing_codes', [])
+        blocks_without_arrows = getattr(self, 'blocks_without_arrows', [])
+        
+        if not missing_codes and not blocks_without_arrows:
             return
         
         # Создаем tooltip окно
@@ -4567,10 +4622,28 @@ class IDEF0App:
         self.error_tooltip.wm_attributes("-topmost", True)
         
         # Формируем текст ошибки
-        if len(self.missing_codes) == 1:
-            error_text = f"Не хватает элемента {self.missing_codes[0]}"
-        else:
-            error_text = f"Не хватает элементов: {', '.join(self.missing_codes)}"
+        error_parts = []
+        
+        if missing_codes:
+            if len(missing_codes) == 1:
+                error_parts.append(f"Не хватает элемента {missing_codes[0]}")
+            else:
+                error_parts.append(f"Не хватает элементов: {', '.join(missing_codes)}")
+        
+        if blocks_without_arrows:
+            block_errors = []
+            for item in blocks_without_arrows:
+                block = item["block"]
+                missing_sides = item["missing_sides"]
+                sides_text = " и ".join(missing_sides)
+                block_errors.append(f"{block.code} ({sides_text})")
+            
+            if len(block_errors) == 1:
+                error_parts.append(f"Блок без входа\\выхода: {block_errors[0]}")
+            else:
+                error_parts.append(f"Блоки без входа\\выхода: {', '.join(block_errors)}")
+        
+        error_text = "\n".join(error_parts)
         
         label = tk.Label(
             self.error_tooltip,
@@ -4581,7 +4654,8 @@ class IDEF0App:
             relief="solid",
             borderwidth=1,
             padx=8,
-            pady=4
+            pady=4,
+            justify="left"
         )
         label.pack()
         
@@ -5040,6 +5114,9 @@ class IDEF0App:
         # Рисуем стрелку
         self.draw_arrow(arrow_data)
         
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от {from_block_id} к {to_block_id}")
         return arrow_data
     
@@ -5082,6 +5159,10 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от блока {from_block_id} к точке ({x:.1f}, {y:.1f})")
         return arrow_data
     
@@ -5124,6 +5205,10 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от точки ({x:.1f}, {y:.1f}) к блоку {to_block_id}")
         return arrow_data
     
@@ -5153,6 +5238,10 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от точки ({x1:.1f}, {y1:.1f}) к точке ({x2:.1f}, {y2:.1f})")
         return arrow_data
     
@@ -5200,6 +5289,9 @@ class IDEF0App:
                     pass
         if arrow_data in self.arrows:
             self.arrows.remove(arrow_data)
+        
+        # Проверяем ошибки валидации после удаления стрелки
+        self.check_numbering_errors()
     
     def save_state(self):
         """Сохраняет текущее состояние для undo/redo"""
@@ -5338,6 +5430,9 @@ class IDEF0App:
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(None)
+        
+        # Проверяем ошибки валидации после восстановления состояния
+        self.check_numbering_errors()
     
     def undo(self):
         """Отменяет последнее действие"""
@@ -5524,6 +5619,9 @@ class IDEF0App:
                 self.update_footer_info()
                 if self.layers_panel_visible:
                     self.update_layers_tree()
+                
+                # Проверяем ошибки валидации после загрузки файла
+                self.check_numbering_errors()
                 
                 messagebox.showinfo("Открытие", "Файл успешно открыт!")
             except Exception as e:
