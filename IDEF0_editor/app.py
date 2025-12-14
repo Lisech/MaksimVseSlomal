@@ -431,6 +431,7 @@ class IDEF0App:
             ("Открыть", "FolderOpen", (20,20)),
             ("Сохранить", "Save", (20,20)),
             ("Сохранить как", "Download", (20,20)),
+            ("Импорт", "Upload", (20,20)),
         ]
 
         for text, icon_name, size in toolbar_buttons:
@@ -447,6 +448,8 @@ class IDEF0App:
                 btn.configure(command=self.save_file)
             elif text == "Сохранить как":
                 btn.configure(command=self.save_file_as)
+            elif text == "Импорт":
+                btn.configure(command=self.import_layers)
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -987,9 +990,11 @@ class IDEF0App:
                 fill=Colors.HANDLE_FILL,
                 outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
                 width=3 if self.is_dark_theme else 1,  # Более толстая обводка в темной теме
-                tags=("resize_handle", block_data["id"], f"handle_{handle_type}")
+                tags=("resize_handle", block_data["id"], f"handle_{handle_type}"),
+                state="normal"  # Убеждаемся, что элемент видим
             )
             block_data["resize_handles"][handle_type] = handle
+            print(f"    Создан handle {handle_type} с id={handle} в позиции ({x}, {y})")
             
             # ВАЖНО: Поднимаем маркер наверх, чтобы он был поверх блока и всех других элементов
             self.canvas.tag_raise(handle)
@@ -1056,8 +1061,10 @@ class IDEF0App:
                         outline=Colors.PRIMARY,
                         width=1,
                         stipple="gray50",  # Полупрозрачность
-                        tags=("arrow_button", block_data["id"], "arrow_button_left")
+                        tags=("arrow_button", block_data["id"], "arrow_button_left"),
+                        state="normal"  # Убеждаемся, что элемент видим
                     )
+                    print(f"    Создана левая кнопка с id={left_button} в позиции ({left_x}, {left_y})")
                     
                     # Кнопка на правой стороне (для стрелки выхода)
                     # Позиционируем кнопку внутри блока, у правого края
@@ -1070,8 +1077,10 @@ class IDEF0App:
                         outline=Colors.PRIMARY,
                         width=1,
                         stipple="gray50",  # Полупрозрачность
-                        tags=("arrow_button", block_data["id"], "arrow_button_right")
+                        tags=("arrow_button", block_data["id"], "arrow_button_right"),
+                        state="normal"  # Убеждаемся, что элемент видим
                     )
+                    print(f"    Создана правая кнопка с id={right_button} в позиции ({right_x}, {right_y})")
                     
                     # Сохраняем ID кнопок
                     if "arrow_buttons" not in block_data:
@@ -1555,25 +1564,46 @@ class IDEF0App:
                 return None
             # В обычном режиме выбора — сразу выбираем блок по одиночному клику
             if self.current_mode == "select":
+                print(f"Клик по блоку {block_data['id']}, пытаемся выделить...")
                 self.select_block(block_data)
                 return "break"
             return None
 
         # Привязываем обработчики событий
         # Важно: arrow_click должен быть первым, чтобы перехватывать клики в режиме рисования стрелок
-        for item_id in [block_data["rect_id"], block_data["text_id"]]:
-            self.canvas.tag_bind(item_id, "<Button-1>", arrow_click)  # Сначала обработчик стрелок
-            self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
-            self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
-            self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
-            self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
+        block_id = block_data["id"]
+        
+        # Привязываем обработчики и через теги, и через ID элементов для надежности
+        if block_data.get("rect_id") and block_data.get("text_id"):
+            # Привязываем через теги блока (более надежно после масштабирования)
+            try:
+                self.canvas.tag_bind(block_id, "<Button-1>", arrow_click)
+                self.canvas.tag_bind(block_id, "<ButtonPress-1>", start_drag)
+                self.canvas.tag_bind(block_id, "<B1-Motion>", drag)
+                self.canvas.tag_bind(block_id, "<ButtonRelease-1>", end_drag)
+                self.canvas.tag_bind(block_id, "<Double-Button-1>", double_click)
+            except tk.TclError:
+                pass
+            
+            # Также привязываем через ID элементов (fallback)
+            for item_id in [block_data["rect_id"], block_data["text_id"]]:
+                try:
+                    self.canvas.tag_bind(item_id, "<Button-1>", arrow_click)
+                    self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
+                    self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
+                    self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
+                    self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
+                except tk.TclError:
+                    pass
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
         # Проверяем, что блок принадлежит текущему уровню
         current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        print(f"Попытка выделить блок {block_data['model'].code}, parent_id={block_data['model'].parent_id}, текущий parent={self.layer_manager.get_current_parent_id()}")
+        print(f"Текущие блоки уровня: {[b.code for b in current_blocks]}")
         if block_data["model"] not in current_blocks:
-            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню")
+            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню (parent_id={block_data['model'].parent_id}, текущий parent={self.layer_manager.get_current_parent_id()})")
             return
         
         # Если открыто меню настроек, закрываем его
@@ -1603,40 +1633,79 @@ class IDEF0App:
         
         # Выделяем новый блок
         self.selected_block = block_data
-        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        
+        # Проверяем, что rect_id существует
+        if not block_data.get("rect_id"):
+            print(f"ОШИБКА: Блок {block_data['id']} не имеет rect_id!")
+            return
+        
+        try:
+            self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+            print(f"Обводка применена к блоку {block_data['id']}, rect_id={block_data['rect_id']}")
+        except tk.TclError as e:
+            print(f"ОШИБКА при применении обводки к блоку {block_data['id']}: {e}")
+            return
         
         # ВАЖНО: Поднимаем блок наверх, чтобы обводка выделения была видна
         self._raise_block(block_data)
         
         # Создаем маркеры изменения размера
+        print(f"Создаем resize handles для блока {block_data['id']}...")
         self.create_resize_handles(block_data)
-        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока и всех элементов
-        for handle_id in block_data.get("resize_handles", {}).values():
-            try:
-                self.canvas.tag_raise(handle_id)
-                # Поднимаем еще выше для гарантии видимости
-                self.canvas.tag_raise(handle_id, "all")
-            except tk.TclError:
-                pass
+        print(f"Resize handles созданы: {list(block_data.get('resize_handles', {}).keys())}")
         
-        # Создаем кнопки для создания стрелок на границах блока
-        self.create_arrow_buttons(block_data)
-        # Поднимаем кнопки наверх
-        if "arrow_buttons" in block_data:
-            for button_id in block_data["arrow_buttons"].values():
+        # Проверяем, что handles действительно созданы и видны
+        for handle_type, handle_id in block_data.get("resize_handles", {}).items():
+            try:
+                coords = self.canvas.coords(handle_id)
+                print(f"  Handle {handle_type} (id={handle_id}): coords={coords}")
+            except tk.TclError as e:
+                print(f"  ОШИБКА: Handle {handle_type} не существует: {e}")
+        
+        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока и всех элементов
+        # Делаем это несколько раз для надежности
+        for _ in range(3):
+            for handle_id in block_data.get("resize_handles", {}).values():
                 try:
-                    self.canvas.tag_raise(button_id)
-                    self.canvas.tag_raise(button_id, "all")
+                    self.canvas.tag_raise(handle_id)
+                    self.canvas.tag_raise(handle_id, "all")
                 except tk.TclError:
                     pass
+        
+        # Создаем кнопки для создания стрелок на границах блока
+        print(f"Создаем arrow buttons для блока {block_data['id']}...")
+        self.create_arrow_buttons(block_data)
+        print(f"Arrow buttons созданы: {list(block_data.get('arrow_buttons', {}).keys())}")
+        
+        # Проверяем, что кнопки действительно созданы и видны
+        for button_side, button_id in block_data.get("arrow_buttons", {}).items():
+            try:
+                coords = self.canvas.coords(button_id)
+                print(f"  Button {button_side} (id={button_id}): coords={coords}")
+            except tk.TclError as e:
+                print(f"  ОШИБКА: Button {button_side} не существует: {e}")
+        
+        # Поднимаем кнопки наверх несколько раз для надежности
+        if "arrow_buttons" in block_data:
+            for _ in range(3):
+                for button_id in block_data["arrow_buttons"].values():
+                    try:
+                        self.canvas.tag_raise(button_id)
+                        self.canvas.tag_raise(button_id, "all")
+                    except tk.TclError:
+                        pass
 
         # Кнопки действий справа от блока
+        print(f"Показываем action buttons для блока {block_data['id']}...")
         self.show_block_action_buttons(block_data)
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(block_data["model"])
         
-        print(f"Выбран блок: {block_data['id']}")
+        # Принудительно обновляем canvas, чтобы все элементы были видны
+        self.canvas.update_idletasks()
+        
+        print(f"Блок {block_data['id']} успешно выделен")
 
     def select_arrow(self, arrow_data):
         """Выбирает стрелку и обновляет панель свойств"""
@@ -4906,6 +4975,12 @@ class IDEF0App:
         block_data["rect_id"] = rect
         block_data["text_id"] = text
 
+        # Применяем текущий масштаб к блоку, если он не равен 1.0
+        if self.zoom_scale != 1.0:
+            cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+            cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+            self.canvas.scale(block_data["id"], cx, cy, self.zoom_scale, self.zoom_scale)
+
         # Делаем блок интерактивным
         self.make_block_interactive(block_data)
 
@@ -6206,6 +6281,555 @@ class IDEF0App:
                 messagebox.showinfo("Открытие", "Файл успешно открыт!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{str(e)}")
+    
+    def import_layers(self):
+        """Открывает диалог выбора файла проекта и показывает список слоев для импорта"""
+        file_path = filedialog.askopenfilename(
+            title="Выберите файл проекта для импорта",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+        
+        try:
+            # Читаем файл проекта
+            with open(file_path, 'r', encoding='utf-8') as f:
+                project_data = json.load(f)
+            
+            # Извлекаем слои из проекта
+            layers = self._extract_layers_from_project(project_data)
+            
+            if not layers:
+                messagebox.showinfo("Импорт", "В выбранном проекте не найдено слоев для импорта.")
+                return
+            
+            # Показываем окно выбора слоев
+            self._show_import_layers_dialog(layers, project_data)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать файл проекта:\n{str(e)}")
+    
+    def _extract_layers_from_project(self, project_data):
+        """Извлекает список слоев из данных проекта"""
+        blocks_data = project_data.get("blocks", [])
+        if not blocks_data:
+            return []
+        
+        # Строим дерево иерархии
+        blocks_dict = {block["id"]: block for block in blocks_data}
+        
+        def build_layer_tree(parent_id=None, level=0, path=[]):
+            """Рекурсивно строит дерево слоев"""
+            layers = []
+            for block in blocks_data:
+                if block.get("parent_id") == parent_id:
+                    block_id = block["id"]
+                    block_code = block.get("code", "?")
+                    block_name = block.get("name", "Без названия")
+                    
+                    # Формируем путь слоя
+                    layer_path = path + [block_id]
+                    path_str = " -> ".join([blocks_dict.get(bid, {}).get("code", "?") for bid in layer_path])
+                    if not path_str:
+                        path_str = "Корневой уровень"
+                    
+                    # Информация о слое
+                    layer_info = {
+                        "block_id": block_id,
+                        "block_code": block_code,
+                        "block_name": block_name,
+                        "level": level,
+                        "path": layer_path,
+                        "path_str": path_str,
+                        "parent_id": parent_id
+                    }
+                    layers.append(layer_info)
+                    
+                    # Рекурсивно получаем дочерние слои
+                    children = build_layer_tree(block_id, level + 1, layer_path)
+                    layers.extend(children)
+            
+            return layers
+        
+        # Начинаем с корневого уровня (блоки без parent_id)
+        root_layers = build_layer_tree(None, 0, [])
+        
+        # Добавляем корневой уровень, если есть блоки
+        if blocks_data:
+            root_blocks = [b for b in blocks_data if b.get("parent_id") is None]
+            if root_blocks:
+                root_layer = {
+                    "block_id": None,
+                    "block_code": "Корневой",
+                    "block_name": "Корневой уровень",
+                    "level": 0,
+                    "path": [],
+                    "path_str": "Корневой уровень",
+                    "parent_id": None
+                }
+                root_layers.insert(0, root_layer)
+        
+        return root_layers
+    
+    def _show_import_layers_dialog(self, layers, project_data):
+        """Показывает диалог выбора слоев для импорта"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Импорт слоев")
+        dialog.geometry("600x500")
+        dialog.configure(bg=Colors.SURFACE)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Заголовок
+        header_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        title_label = tk.Label(
+            header_frame,
+            text="Выберите слой для импорта:",
+            font=Fonts.SECTION,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT)
+        
+        # Фрейм со списком
+        list_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Scrollbar
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Listbox
+        listbox = tk.Listbox(
+            list_frame,
+            font=("Segoe UI", 10),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            selectbackground=Colors.PRIMARY,
+            selectforeground="#ffffff",
+            yscrollcommand=scrollbar.set,
+            borderwidth=1,
+            relief="solid"
+        )
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        
+        # Заполняем список слоями
+        for layer in layers:
+            indent = "  " * layer["level"]
+            display_text = f"{indent}{layer['path_str']} - {layer['block_name']}"
+            listbox.insert(tk.END, display_text)
+        
+        # Обработчик двойного клика
+        def on_double_click(event):
+            selection = listbox.curselection()
+            if selection:
+                index = selection[0]
+                selected_layer = layers[index]
+                self._import_layer(selected_layer, project_data)
+                dialog.destroy()
+        
+        listbox.bind("<Double-Button-1>", on_double_click)
+        
+        # Кнопки
+        button_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        cancel_btn = tk.Button(
+            button_frame,
+            text="Отмена",
+            command=dialog.destroy,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            font=Fonts.BODY,
+            relief="solid",
+            borderwidth=1,
+            padx=20,
+            pady=5
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+        
+        import_btn = tk.Button(
+            button_frame,
+            text="Импортировать",
+            command=lambda: self._import_selected_layer(listbox, layers, project_data, dialog),
+            bg=Colors.PRIMARY,
+            fg="#ffffff",
+            font=Fonts.BODY,
+            relief="solid",
+            borderwidth=1,
+            padx=20,
+            pady=5
+        )
+        import_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def _import_selected_layer(self, listbox, layers, project_data, dialog):
+        """Импортирует выбранный слой"""
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Предупреждение", "Выберите слой для импорта.")
+            return
+        
+        index = selection[0]
+        selected_layer = layers[index]
+        self._import_layer(selected_layer, project_data)
+        dialog.destroy()
+    
+    def _import_layer(self, layer_info, project_data):
+        """Импортирует указанный слой в текущий проект"""
+        try:
+            self.save_state()  # Сохраняем состояние для undo
+            
+            blocks_data = project_data.get("blocks", [])
+            arrows_data = project_data.get("arrows", [])
+            
+            # Определяем, какие блоки и стрелки принадлежат выбранному слою
+            layer_path = layer_info["path"]
+            parent_id = layer_info["parent_id"]
+            
+            # Получаем все блоки слоя
+            if parent_id is None:
+                # Корневой уровень - все блоки без parent_id
+                layer_blocks = [b for b in blocks_data if b.get("parent_id") is None]
+            else:
+                # Уровень детализации - блоки с parent_id = последнему в пути
+                layer_blocks = [b for b in blocks_data if b.get("parent_id") == parent_id]
+            
+            if not layer_blocks:
+                messagebox.showwarning("Предупреждение", "Выбранный слой не содержит блоков.")
+                return
+            
+            # Получаем ID только блоков выбранного слоя (БЕЗ дочерних блоков)
+            layer_block_ids = {block["id"] for block in layer_blocks}
+            
+            # Получаем стрелки, которые связывают ТОЛЬКО блоки выбранного слоя между собой
+            # (не включаем стрелки, которые идут к дочерним блокам или от них)
+            layer_arrows = []
+            for arrow in arrows_data:
+                from_id = arrow.get("from_block_id")
+                to_id = arrow.get("to_block_id")
+                # Импортируем стрелку только если оба блока принадлежат выбранному слою
+                # (или если стрелка идет от/к точке, но один из блоков в слое)
+                if from_id and to_id:
+                    # Стрелка между двумя блоками - оба должны быть в слое
+                    if from_id in layer_block_ids and to_id in layer_block_ids:
+                        layer_arrows.append(arrow)
+                elif from_id and from_id in layer_block_ids:
+                    # Стрелка от блока к точке - блок должен быть в слое
+                    layer_arrows.append(arrow)
+                elif to_id and to_id in layer_block_ids:
+                    # Стрелка от точки к блоку - блок должен быть в слое
+                    layer_arrows.append(arrow)
+            
+            # Импортируем блоки
+            imported_blocks = []
+            block_id_mapping = {}  # Старый ID -> Новый ID
+            
+            for block_data in layer_blocks:
+                # Генерируем новый ID
+                new_block_id = f"block_{self.next_block_id}"
+                self.next_block_id += 1
+                old_block_id = block_data["id"]
+                block_id_mapping[old_block_id] = new_block_id
+                
+                # Генерируем новый код
+                parent_id_current = self.layer_manager.get_current_parent_id()
+                current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                
+                # Генерируем уникальный код
+                if parent_id_current:
+                    parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id_current), None)
+                    if parent_block:
+                        sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id_current]
+                        used_numbers = set()
+                        for bd in sibling_blocks:
+                            code_parts = bd["model"].code.split(".")
+                            if len(code_parts) > 1:
+                                try:
+                                    num = int(code_parts[-1])
+                                    used_numbers.add(num)
+                                except ValueError:
+                                    pass
+                        code_num = 1
+                        while code_num in used_numbers:
+                            code_num += 1
+                        code = f"{parent_block.code}.{code_num}"
+                    else:
+                        code = f"A{self.next_block_id}"
+                else:
+                    used_numbers = set()
+                    for bd in current_blocks_models:
+                        code = bd.code
+                        if code.startswith("A") and "." not in code:
+                            try:
+                                num = int(code[1:])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    code = f"A{code_num}"
+                
+                # Создаем новый блок
+                # ВАЖНО: При импорте слоя все блоки размещаются на текущем уровне проекта
+                # Убираем информацию о дочерних блоках - импортируем только выбранный слой
+                new_block = Block(
+                    block_id=new_block_id,
+                    name=block_data.get("name", "Блок")[:80],
+                    code=code,
+                    element_type=block_data.get("element_type", "Выберите тип..."),
+                    description=block_data.get("description", ""),
+                    x=block_data.get("x", 150),
+                    y=block_data.get("y", 150),
+                    width=block_data.get("width", 150),
+                    height=block_data.get("height", 50),
+                    color=block_data.get("color"),
+                    border_width=block_data.get("border_width", 2),
+                    parent_id=parent_id_current  # Привязываем к текущему уровню проекта (не сохраняем исходную иерархию)
+                )
+                
+                # Создаем визуальное представление
+                x = new_block.x
+                y = new_block.y
+                width = new_block.width
+                height = new_block.height
+                
+                rect = self.canvas.create_rectangle(
+                    x - width / 2, y - height / 2,
+                    x + width / 2, y + height / 2,
+                    fill=new_block.color,
+                    outline=Colors.BLOCK_BORDER,
+                    width=new_block.border_width,
+                    tags=("block", new_block_id)
+                )
+                
+                formatted_text = self.format_block_text(new_block.name, width)
+                text = self.canvas.create_text(
+                    x, y,
+                    text=formatted_text,
+                    font=("Segoe UI", 10),
+                    fill=Colors.TEXT_PRIMARY,
+                    justify="center",
+                    width=width - 10,
+                    tags=("block_text", new_block_id)
+                )
+                
+                block_data_obj = {
+                    "id": new_block_id,
+                    "model": new_block,
+                    "rect_id": rect,
+                    "text_id": text,
+                    "resize_handles": {}
+                }
+                
+                self.blocks.append(block_data_obj)
+                
+                # Применяем масштаб ПОСЛЕ добавления в список, но ДО make_block_interactive
+                # чтобы обработчики событий привязывались к уже масштабированным элементам
+                if self.zoom_scale != 1.0:
+                    cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+                    cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+                    self.canvas.scale(new_block_id, cx, cy, self.zoom_scale, self.zoom_scale)
+                
+                # Проверяем, что rect_id и text_id все еще существуют после масштабирования
+                try:
+                    # Проверяем существование элементов
+                    rect_coords = self.canvas.coords(block_data_obj["rect_id"])
+                    text_coords = self.canvas.coords(block_data_obj["text_id"])
+                    if not rect_coords or not text_coords:
+                        print(f"ОШИБКА: Элементы блока {new_block_id} не имеют координат после масштабирования")
+                    else:
+                        print(f"Блок {new_block_id}: rect_id={block_data_obj['rect_id']}, text_id={block_data_obj['text_id']} существуют после масштабирования, coords={rect_coords}")
+                except tk.TclError as e:
+                    print(f"ОШИБКА: Элементы блока {new_block_id} не существуют после масштабирования: {e}")
+                    # Пытаемся найти элементы по тегам
+                    try:
+                        items = self.canvas.find_withtag(new_block_id)
+                        print(f"Найдено элементов с тегом {new_block_id}: {items}")
+                        if len(items) >= 2:
+                            # Обновляем rect_id и text_id
+                            block_data_obj["rect_id"] = items[0] if items[0] else block_data_obj["rect_id"]
+                            block_data_obj["text_id"] = items[1] if items[1] else block_data_obj["text_id"]
+                            print(f"Обновлены ID элементов: rect_id={block_data_obj['rect_id']}, text_id={block_data_obj['text_id']}")
+                    except tk.TclError:
+                        pass
+                
+                # Делаем блок интерактивным ПОСЛЕ применения масштаба
+                # Важно: make_block_interactive должен вызываться после масштабирования
+                # чтобы обработчики событий привязывались к правильным элементам
+                self.make_block_interactive(block_data_obj)
+                
+                # Убеждаемся, что блок виден на canvas и находится поверх других элементов
+                try:
+                    # Поднимаем блоки наверх, чтобы они были видны и кликабельны
+                    self.canvas.tag_raise(block_data_obj["rect_id"], "all")
+                    self.canvas.tag_raise(block_data_obj["text_id"], "all")
+                    # Также поднимаем по тегу блока
+                    self.canvas.tag_raise(block_data_obj["id"], "all")
+                    print(f"Блок {new_block_id} поднят наверх canvas")
+                except tk.TclError as e:
+                    print(f"Ошибка при поднятии блока {new_block_id}: {e}")
+                
+                imported_blocks.append(block_data_obj)
+                # Отладочный вывод
+                current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                is_visible = block_data_obj["model"] in current_blocks
+                current_parent = self.layer_manager.get_current_parent_id()
+                print(f"Импортирован блок {new_block_id} (code={code}), parent_id={parent_id_current}, текущий parent={current_parent}, видим на уровне: {is_visible}, rect_id={block_data_obj.get('rect_id')}, text_id={block_data_obj.get('text_id')}")
+                
+                # Проверяем, что блок действительно виден на текущем уровне
+                if not is_visible:
+                    print(f"ПРЕДУПРЕЖДЕНИЕ: Блок {new_block_id} не виден на текущем уровне! parent_id={parent_id_current}, текущий parent={current_parent}")
+                    # Если блок не виден, возможно нужно обновить его parent_id
+                    if parent_id_current != current_parent:
+                        print(f"Исправляем parent_id блока {new_block_id} с {parent_id_current} на {current_parent}")
+                        block_data_obj["model"].parent_id = current_parent
+            
+            # Импортируем стрелки (только те, которые полностью в пределах импортированных блоков)
+            imported_arrows_count = 0
+            for arrow_data in layer_arrows:
+                from_id = arrow_data.get("from_block_id")
+                to_id = arrow_data.get("to_block_id")
+                
+                # Проверяем, что оба блока импортированы
+                if from_id and from_id not in block_id_mapping:
+                    continue
+                if to_id and to_id not in block_id_mapping:
+                    continue
+                
+                # Создаем новую стрелку с обновленными ID
+                new_from_id = block_id_mapping.get(from_id) if from_id else None
+                new_to_id = block_id_mapping.get(to_id) if to_id else None
+                
+                arrow_id = f"arrow_{self.next_arrow_id}"
+                self.next_arrow_id += 1
+                
+                new_arrow = Arrow(
+                    arrow_id=arrow_id,
+                    from_block_id=new_from_id,
+                    to_block_id=new_to_id,
+                    from_side=arrow_data.get("from_side", "right"),
+                    to_side=arrow_data.get("to_side", "left"),
+                    from_attachment_point=arrow_data.get("from_attachment_point"),
+                    to_attachment_point=arrow_data.get("to_attachment_point"),
+                    color=arrow_data.get("color", Colors.ARROW_COLOR),
+                    width=arrow_data.get("width", 2),
+                    style=arrow_data.get("style", "solid"),
+                    x1=arrow_data.get("x1"),
+                    y1=arrow_data.get("y1"),
+                    x2=arrow_data.get("x2"),
+                    y2=arrow_data.get("y2"),
+                    text=arrow_data.get("text", "")
+                )
+                
+                arrow_data_obj = {
+                    "arrow": new_arrow,
+                    "line_id": None,
+                    "arrowhead_id": None
+                }
+                
+                self.arrows.append(arrow_data_obj)
+                self.draw_arrow(arrow_data_obj)
+                imported_arrows_count += 1
+            
+            # Сохраняем текущее выделение, если оно есть
+            saved_selected_block = self.selected_block
+            
+            # Обновляем стрелки для всех импортированных блоков
+            for block_data_obj in imported_blocks:
+                self.update_arrows_for_block(block_data_obj["id"])
+            
+            # Прокручиваем canvas к импортированным блокам, если они есть
+            if imported_blocks:
+                # Находим центр всех импортированных блоков
+                total_x = 0
+                total_y = 0
+                count = 0
+                for block_data_obj in imported_blocks:
+                    try:
+                        coords = self.canvas.coords(block_data_obj["rect_id"])
+                        if len(coords) >= 4:
+                            center_x = (coords[0] + coords[2]) / 2
+                            center_y = (coords[1] + coords[3]) / 2
+                            total_x += center_x
+                            total_y += center_y
+                            count += 1
+                    except tk.TclError:
+                        pass
+                
+                if count > 0:
+                    avg_x = total_x / count
+                    avg_y = total_y / count
+                    # Прокручиваем canvas к центру импортированных блоков
+                    canvas_width = self.canvas.winfo_width()
+                    canvas_height = self.canvas.winfo_height()
+                    
+                    # Используем scan_markto для прокрутки
+                    try:
+                        # Преобразуем координаты canvas в координаты экрана
+                        screen_x = self.canvas.canvasx(avg_x)
+                        screen_y = self.canvas.canvasy(avg_y)
+                        # Прокручиваем так, чтобы центр блоков был в центре видимой области
+                        self.canvas.scan_markto(0, 0)
+                        self.canvas.scan_dragto(int(screen_x - canvas_width / 2), int(screen_y - canvas_height / 2), gain=1)
+                    except Exception as e:
+                        print(f"Ошибка при прокрутке к импортированным блокам: {e}")
+            
+            # НЕ вызываем refresh_canvas(), так как блоки уже созданы и интерактивны
+            # refresh_canvas() удалит все элементы и перерисует их, что может сломать обработчики событий
+            # Вместо этого просто обновляем стрелки и проверяем ошибки
+            
+            # Проверяем, что все импортированные блоки видны на текущем уровне
+            current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+            current_blocks_ids = {block.id for block in current_blocks_models}
+            print(f"После импорта: текущий parent={self.layer_manager.get_current_parent_id()}, видимых блоков на уровне: {len(current_blocks_ids)}")
+            for block_data_obj in imported_blocks:
+                block_id = block_data_obj["model"].id
+                is_visible = block_id in current_blocks_ids
+                print(f"  Блок {block_id} (code={block_data_obj['model'].code}, parent_id={block_data_obj['model'].parent_id}): видим={is_visible}")
+                if not is_visible:
+                    print(f"  ОШИБКА: Блок {block_id} не виден на текущем уровне!")
+            
+            # Обновляем canvas, чтобы убедиться, что все элементы отображаются
+            self.canvas.update_idletasks()
+            
+            self.check_numbering_errors()
+            
+            # Показываем сообщение об успешном импорте
+            messagebox.showinfo("Импорт", f"Слой '{layer_info['path_str']}' успешно импортирован!\nИмпортировано блоков: {len(imported_blocks)}\nИмпортировано стрелок: {imported_arrows_count}")
+            
+            # Восстанавливаем выделение ПОСЛЕ закрытия диалога, чтобы избежать конфликтов
+            # Используем after для отложенного выполнения, чтобы все операции завершились
+            def restore_selection():
+                # Проверяем, что импортированные блоки видны
+                current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                current_blocks_ids = {block.id for block in current_blocks_models}
+                
+                if saved_selected_block:
+                    # Проверяем, что сохраненный блок все еще существует и виден
+                    if saved_selected_block in self.blocks:
+                        if saved_selected_block["model"].id in current_blocks_ids:
+                            print(f"Восстанавливаем выделение сохраненного блока {saved_selected_block['model'].code}")
+                            self.select_block(saved_selected_block)
+                        else:
+                            print(f"Сохраненный блок {saved_selected_block['model'].code} не виден на текущем уровне")
+                
+                # Если нет сохраненного выделения или оно не видно, выделяем первый импортированный блок
+                if not self.selected_block and imported_blocks:
+                    for block_data_obj in imported_blocks:
+                        if block_data_obj["model"].id in current_blocks_ids:
+                            print(f"Выделяем первый импортированный блок {block_data_obj['model'].code}")
+                            self.select_block(block_data_obj)
+                            break
+            
+            # Выполняем восстановление выделения после закрытия диалога
+            self.root.after(200, restore_selection)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось импортировать слой:\n{str(e)}")
     
     def copy_selected(self):
         """Копирует выбранный элемент (блок или стрелку) в буфер обмена"""
