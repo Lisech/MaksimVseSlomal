@@ -289,6 +289,12 @@ class IDEF0App:
             elif event.keysym in ('Delete', 'BackSpace'):
                 safe_delete(event)
                 return "break"
+            # Обрабатываем Escape - отмена создания стрелки
+            elif event.keysym == 'Escape':
+                if self.arrow_drawing:
+                    # Отменяем создание стрелки
+                    self._cancel_arrow_drawing()
+                    return "break"
         
         # Привязываем горячие клавиши через bind_all для глобальной работы
         # bind_all работает на всех виджетах и всегда, независимо от фокуса
@@ -1015,6 +1021,223 @@ class IDEF0App:
         for handle_id in block_data["resize_handles"].values():
             self.canvas.delete(handle_id)
         block_data["resize_handles"] = {}
+    
+    def create_arrow_buttons(self, block_data):
+        """Создает кнопки внутри блока для создания стрелок"""
+        # Удаляем старые кнопки
+        self.delete_arrow_buttons(block_data)
+        
+        model = block_data["model"]
+        button_size = 10  # Размер кнопки
+        
+        # Получаем актуальные визуальные координаты блока с canvas
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_x = (visual_x1 + visual_x2) / 2
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    visual_width = visual_x2 - visual_x1
+                    visual_height = visual_y2 - visual_y1
+                    
+                    # Отступ от края блока для кнопок
+                    offset = 8
+                    
+                    # Кнопка на левой стороне (для стрелки входа)
+                    # Позиционируем кнопку внутри блока, у левого края
+                    left_x = visual_x1 + offset
+                    left_y = visual_center_y
+                    left_button = self.canvas.create_oval(
+                        left_x - button_size/2, left_y - button_size/2,
+                        left_x + button_size/2, left_y + button_size/2,
+                        fill=Colors.PRIMARY,
+                        outline=Colors.PRIMARY,
+                        width=1,
+                        stipple="gray50",  # Полупрозрачность
+                        tags=("arrow_button", block_data["id"], "arrow_button_left")
+                    )
+                    
+                    # Кнопка на правой стороне (для стрелки выхода)
+                    # Позиционируем кнопку внутри блока, у правого края
+                    right_x = visual_x2 - offset
+                    right_y = visual_center_y
+                    right_button = self.canvas.create_oval(
+                        right_x - button_size/2, right_y - button_size/2,
+                        right_x + button_size/2, right_y + button_size/2,
+                        fill=Colors.PRIMARY,
+                        outline=Colors.PRIMARY,
+                        width=1,
+                        stipple="gray50",  # Полупрозрачность
+                        tags=("arrow_button", block_data["id"], "arrow_button_right")
+                    )
+                    
+                    # Сохраняем ID кнопок
+                    if "arrow_buttons" not in block_data:
+                        block_data["arrow_buttons"] = {}
+                    block_data["arrow_buttons"]["left"] = left_button
+                    block_data["arrow_buttons"]["right"] = right_button
+                    
+                    # Привязываем обработчики событий
+                    def on_left_button_click(event, b=block_data):
+                        """Обработчик клика по левой кнопке - создание перпендикулярной стрелки"""
+                        self.create_perpendicular_arrow(b, "left")
+                        return "break"
+                    
+                    def on_right_button_click(event, b=block_data):
+                        """Обработчик клика по правой кнопке - создание перпендикулярной стрелки"""
+                        self.create_perpendicular_arrow(b, "right")
+                        return "break"
+                    
+                    self.canvas.tag_bind(left_button, "<Button-1>", on_left_button_click)
+                    self.canvas.tag_bind(right_button, "<Button-1>", on_right_button_click)
+                    
+                    # Поднимаем кнопки наверх
+                    self.canvas.tag_raise(left_button)
+                    self.canvas.tag_raise(right_button)
+                    try:
+                        self.canvas.tag_raise(left_button, "all")
+                        self.canvas.tag_raise(right_button, "all")
+                    except tk.TclError:
+                        pass
+        except (tk.TclError, AttributeError, IndexError):
+            pass
+    
+    def update_arrow_buttons_position(self, block_data):
+        """Обновляет позицию кнопок создания стрелок при перемещении блока"""
+        if "arrow_buttons" not in block_data or not block_data["arrow_buttons"]:
+            return
+        
+        button_size = 10
+        offset = 8  # Отступ от края блока
+        
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    
+                    # Обновляем позицию левой кнопки
+                    if "left" in block_data["arrow_buttons"]:
+                        left_button = block_data["arrow_buttons"]["left"]
+                        left_x = visual_x1 + offset
+                        left_y = visual_center_y
+                        self.canvas.coords(
+                            left_button,
+                            left_x - button_size/2, left_y - button_size/2,
+                            left_x + button_size/2, left_y + button_size/2
+                        )
+                    
+                    # Обновляем позицию правой кнопки
+                    if "right" in block_data["arrow_buttons"]:
+                        right_button = block_data["arrow_buttons"]["right"]
+                        right_x = visual_x2 - offset
+                        right_y = visual_center_y
+                        self.canvas.coords(
+                            right_button,
+                            right_x - button_size/2, right_y - button_size/2,
+                            right_x + button_size/2, right_y + button_size/2
+                        )
+        except (tk.TclError, AttributeError, IndexError):
+            pass
+    
+    def _restore_arrow_buttons(self):
+        """Восстанавливает скрытые кнопки создания стрелок"""
+        if self.selected_block and "arrow_buttons" in self.selected_block:
+            for button_id in self.selected_block["arrow_buttons"].values():
+                try:
+                    self.canvas.itemconfig(button_id, state="normal")
+                except tk.TclError:
+                    pass
+    
+    def _cancel_arrow_drawing(self):
+        """Отменяет создание стрелки и восстанавливает состояние"""
+        # Удаляем превью
+        if self.arrow_preview_line:
+            self.canvas.delete(self.arrow_preview_line)
+            self.arrow_preview_line = None
+        
+        # Восстанавливаем кнопки
+        self._restore_arrow_buttons()
+        
+        # Сбрасываем состояние
+        self.arrow_start_block = None
+        self.arrow_start_x = None
+        self.arrow_start_y = None
+        self.arrow_start_side = None
+        self.arrow_target_block = None
+        self.arrow_target_side = None
+        self.arrow_drawing = False
+        self.arrow_drawing_mode = False
+        self.current_mode = "select"
+        self.canvas.configure(cursor="")
+    
+    def delete_arrow_buttons(self, block_data):
+        """Удаляет кнопки создания стрелок"""
+        if "arrow_buttons" in block_data:
+            for button_id in block_data["arrow_buttons"].values():
+                try:
+                    self.canvas.delete(button_id)
+                except tk.TclError:
+                    pass
+            block_data["arrow_buttons"] = {}
+    
+    def create_perpendicular_arrow(self, block_data, side):
+        """Создает небольшую перпендикулярную стрелку от кнопки"""
+        # Сохраняем состояние для undo
+        self.save_state()
+        
+        model = block_data["model"]
+        arrow_length = 35  # Длина перпендикулярной стрелки
+        
+        # Удаляем кнопку после клика
+        if "arrow_buttons" in block_data and side in block_data["arrow_buttons"]:
+            button_id = block_data["arrow_buttons"][side]
+            try:
+                self.canvas.delete(button_id)
+                del block_data["arrow_buttons"][side]
+            except tk.TclError:
+                pass
+        
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    
+                    if side == "left":
+                        # Стрелка входа - выходит влево
+                        # Начало стрелки - слева от блока (на расстоянии arrow_length)
+                        start_x = visual_x1 - arrow_length
+                        start_y = visual_center_y
+                        # Конец стрелки - на левой границе блока (входит в блок)
+                        
+                        # Создаем стрелку от точки к блоку (входит в блок слева)
+                        self.create_arrow_from_point_to_block(
+                            start_x, start_y,
+                            block_data["id"],
+                            to_side="left"
+                        )
+                    else:  # right
+                        # Стрелка выхода - выходит вправо
+                        # Начало стрелки - на правой границе блока
+                        # Конец стрелки - справа от блока (на расстоянии arrow_length)
+                        end_x = visual_x2 + arrow_length
+                        end_y = visual_center_y
+                        
+                        # Создаем стрелку от блока к точке (выходит из блока справа)
+                        self.create_arrow_from_block_to_point(
+                            block_data["id"],
+                            end_x, end_y,
+                            from_side="right"
+                        )
+        except (tk.TclError, AttributeError, IndexError) as e:
+            print(f"Ошибка при создании перпендикулярной стрелки: {e}")
 
     def start_resize(self, event, block_data, handle_type):
         """Начало изменения размера"""
@@ -1180,6 +1403,10 @@ class IDEF0App:
             # Обновляем стрелки, соединенные с этим блоком
             self.update_arrows_for_block(block_data["id"])
             
+            # Обновляем позицию кнопок создания стрелок
+            if self.selected_block == block_data:
+                self.update_arrow_buttons_position(block_data)
+            
             # Обновляем свойства
             if self.selected_block == block_data:
                 self.properties_panel.update_properties(model)
@@ -1210,6 +1437,8 @@ class IDEF0App:
         # Обновляем маркеры изменения размера
         if block_data == self.selected_block:
             self.create_resize_handles(block_data)
+            # Обновляем кнопки создания стрелок
+            self.create_arrow_buttons(block_data)
             # ВАЖНО: Убеждаемся, что выбранный блок всегда наверху после любых обновлений
             self._raise_block(block_data)
             # Поднимаем все маркеры наверх
@@ -1218,6 +1447,14 @@ class IDEF0App:
                     self.canvas.tag_raise(handle_id)
                 except tk.TclError:
                     pass
+            # Поднимаем кнопки наверх
+            if "arrow_buttons" in block_data:
+                for button_id in block_data["arrow_buttons"].values():
+                    try:
+                        self.canvas.tag_raise(button_id)
+                        self.canvas.tag_raise(button_id, "all")
+                    except tk.TclError:
+                        pass
         
         # Обновляем стрелки, соединенные с этим блоком
         self.update_arrows_for_block(block_data["id"])
@@ -1268,6 +1505,8 @@ class IDEF0App:
                 if block_data == self.selected_block:
                     for handle_id in block_data["resize_handles"].values():
                         self.canvas.move(handle_id, dx, dy)
+                    # Обновляем позицию кнопок создания стрелок
+                    self.update_arrow_buttons_position(block_data)
 
                 # Обновляем данные о перетаскивании
                 block_data["drag_data"] = {"x": x, "y": y}
@@ -1345,6 +1584,7 @@ class IDEF0App:
                 width=prev_model.border_width
             )
             self.delete_resize_handles(self.selected_block)
+            self.delete_arrow_buttons(self.selected_block)
             self.hide_block_action_buttons()
         
         # Сбрасываем выделение стрелки, если была выбрана
@@ -1368,6 +1608,17 @@ class IDEF0App:
                 self.canvas.tag_raise(handle_id, "all")
             except tk.TclError:
                 pass
+        
+        # Создаем кнопки для создания стрелок на границах блока
+        self.create_arrow_buttons(block_data)
+        # Поднимаем кнопки наверх
+        if "arrow_buttons" in block_data:
+            for button_id in block_data["arrow_buttons"].values():
+                try:
+                    self.canvas.tag_raise(button_id)
+                    self.canvas.tag_raise(button_id, "all")
+                except tk.TclError:
+                    pass
 
         # Кнопки действий справа от блока
         self.show_block_action_buttons(block_data)
@@ -3493,6 +3744,9 @@ class IDEF0App:
         if self.selected_block:
             self.delete_resize_handles(self.selected_block)
             self.create_resize_handles(self.selected_block)
+            # Обновляем кнопки создания стрелок
+            self.delete_arrow_buttons(self.selected_block)
+            self.create_arrow_buttons(self.selected_block)
         
         # Обновляем точки прикрепления, если они отображаются
         if hasattr(self, 'attachment_points') and self.attachment_points:
@@ -3582,6 +3836,9 @@ class IDEF0App:
         if self.selected_block:
             self.delete_resize_handles(self.selected_block)
             self.create_resize_handles(self.selected_block)
+            # Обновляем кнопки создания стрелок
+            self.delete_arrow_buttons(self.selected_block)
+            self.create_arrow_buttons(self.selected_block)
         
         # Обновляем точки прикрепления, если они отображаются
         if hasattr(self, 'attachment_points') and self.attachment_points:
@@ -3687,6 +3944,7 @@ class IDEF0App:
                         width=prev_model.border_width
                     )
                     self.delete_resize_handles(self.selected_block)
+                    self.delete_arrow_buttons(self.selected_block)
                     self.selected_block = None
                     self.hide_block_action_buttons()
                 if self.selected_arrow:
@@ -3730,30 +3988,82 @@ class IDEF0App:
                 self.arrow_preview_line = None
             
             # Создаем стрелку
-            if self.arrow_start_block and end_block:
+            # Проверяем, была ли стрелка начата от кнопки
+            arrow_start_side = getattr(self, 'arrow_start_side', None)
+            arrow_target_block = getattr(self, 'arrow_target_block', None)
+            arrow_target_side = getattr(self, 'arrow_target_side', None)
+            
+            # Если стрелка создана от левой кнопки, она должна входить в целевой блок
+            if arrow_target_block and arrow_target_side and self.arrow_start_x is not None:
+                # Стрелка входа - начинается от точки (кнопки), входит в блок
+                # Если отпустили на другом блоке, создаем стрелку от точки к этому блоку
+                if end_block and end_block["id"] != arrow_target_block["id"]:
+                    # Стрелка от точки к другому блоку
+                    self.create_arrow_from_point_to_block(
+                        self.arrow_start_x, self.arrow_start_y,
+                        end_block["id"],
+                        to_side=None  # Определится автоматически
+                    )
+                else:
+                    # Стрелка от точки к целевому блоку (от кнопки)
+                    self.create_arrow_from_point_to_block(
+                        self.arrow_start_x, self.arrow_start_y,
+                        arrow_target_block["id"],
+                        to_side=arrow_target_side
+                    )
+            elif self.arrow_start_block and end_block:
                 # Стрелка от блока к блоку
                 if self.arrow_start_block["id"] != end_block["id"]:
-                    from_side, to_side = self._determine_arrow_sides(
-                        self.arrow_start_block["model"],
-                        end_block["model"]
-                    )
-                    self.create_arrow_between_blocks(
-                        self.arrow_start_block["id"],
-                        end_block["id"],
-                        from_side=from_side,
-                        to_side=to_side
-                    )
+                    if arrow_start_side == "left":
+                        # Стрелка входа - входит в целевой блок слева
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side="left",
+                            to_side="left"
+                        )
+                    elif arrow_start_side == "right":
+                        # Стрелка выхода - выходит из начального блока справа
+                        from_side, to_side = self._determine_arrow_sides(
+                            self.arrow_start_block["model"],
+                            end_block["model"]
+                        )
+                        # Принудительно устанавливаем from_side="right"
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side="right",
+                            to_side=to_side
+                        )
+                    else:
+                        # Обычная логика определения сторон
+                        from_side, to_side = self._determine_arrow_sides(
+                            self.arrow_start_block["model"],
+                            end_block["model"]
+                        )
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side=from_side,
+                            to_side=to_side
+                        )
             elif self.arrow_start_block:
                 # Стрелка от блока к точке
+                # Если стрелка создана от правой кнопки, она должна выходить из блока справа
+                from_side = "right" if arrow_start_side == "right" else None
                 self.create_arrow_from_block_to_point(
                     self.arrow_start_block["id"],
-                    x, y
+                    x, y,
+                    from_side=from_side
                 )
             elif end_block:
                 # Стрелка от точки к блоку
+                # Если стрелка создана от левой кнопки, она должна входить в блок слева
+                to_side = "left" if arrow_start_side == "left" else None
                 self.create_arrow_from_point_to_block(
                     self.arrow_start_x, self.arrow_start_y,
-                    end_block["id"]
+                    end_block["id"],
+                    to_side=to_side
                 )
             elif self.arrow_start_x is not None and self.arrow_start_y is not None:
                 # Стрелка от точки к точке
@@ -3766,7 +4076,13 @@ class IDEF0App:
             self.arrow_start_block = None
             self.arrow_start_x = None
             self.arrow_start_y = None
+            self.arrow_start_side = None
+            self.arrow_target_block = None
+            self.arrow_target_side = None
             self.arrow_drawing = False
+            
+            # Восстанавливаем кнопки, если они были скрыты
+            self._restore_arrow_buttons()
             
             # Переключаем режим на начальный (select) после создания стрелки
             self.enable_select_mode()
@@ -3793,17 +4109,22 @@ class IDEF0App:
             
             if self.arrow_start_block:
                 # Начало от блока
-                start_block = self.arrow_start_block["model"]
-                # Определяем сторону начального блока на основе направления к курсору
-                dx = x - start_block.x
-                dy = y - start_block.y
-                
-                if abs(dx) > abs(dy):
-                    from_side = "right" if dx > 0 else "left"
+                start_block_data = self.arrow_start_block
+                start_block_model = start_block_data["model"]
+                # Используем заданную сторону, если она есть, иначе определяем по направлению к курсору
+                if hasattr(self, 'arrow_start_side') and self.arrow_start_side:
+                    from_side = self.arrow_start_side
                 else:
-                    from_side = "bottom" if dy > 0 else "top"
+                    # Определяем сторону начального блока на основе направления к курсору
+                    dx = x - start_block_model.x
+                    dy = y - start_block_model.y
+                    
+                    if abs(dx) > abs(dy):
+                        from_side = "right" if dx > 0 else "left"
+                    else:
+                        from_side = "bottom" if dy > 0 else "top"
                 
-                start_x, start_y = self._get_block_side_point(start_block, from_side)
+                start_x, start_y = self._get_block_side_point(start_block_data, from_side)
             elif self.arrow_start_x is not None and self.arrow_start_y is not None:
                 # Начало от точки
                 start_x = self.arrow_start_x
@@ -3900,18 +4221,53 @@ class IDEF0App:
     def _get_block_side_point(self, block, side):
         """
         Получает точку на стороне блока (вспомогательный метод)
+        Использует визуальные координаты блока с canvas для правильной работы при масштабировании
         
         Args:
-            block: Модель блока
+            block: Модель блока или block_data
             side: Сторона ("left", "right", "top", "bottom")
             
         Returns:
             tuple: (x, y) координаты точки
         """
-        x = block.x
-        y = block.y
-        width = block.width
-        height = block.height
+        # Если передан block_data, получаем визуальные координаты с canvas
+        if isinstance(block, dict) and "rect_id" in block:
+            block_data = block
+            try:
+                rect_id = block_data.get("rect_id")
+                if rect_id:
+                    coords = self.canvas.coords(rect_id)
+                    if len(coords) >= 4:
+                        visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                        visual_center_x = (visual_x1 + visual_x2) / 2
+                        visual_center_y = (visual_y1 + visual_y2) / 2
+                        visual_width = visual_x2 - visual_x1
+                        visual_height = visual_y2 - visual_y1
+                        
+                        if side == "left":
+                            return (visual_x1, visual_center_y)
+                        elif side == "right":
+                            return (visual_x2, visual_center_y)
+                        elif side == "top":
+                            return (visual_center_x, visual_y1)
+                        elif side == "bottom":
+                            return (visual_center_x, visual_y2)
+                        else:
+                            return (visual_center_x, visual_center_y)
+            except (tk.TclError, AttributeError, IndexError):
+                pass
+        
+        # Если передан model или не удалось получить визуальные координаты, используем логические
+        if hasattr(block, 'x'):
+            model = block
+        else:
+            # Если это block_data, получаем model
+            model = block.get("model") if isinstance(block, dict) else block
+        
+        x = model.x
+        y = model.y
+        width = model.width
+        height = model.height
         
         if side == "left":
             return (x - width / 2, y)
@@ -5318,7 +5674,7 @@ class IDEF0App:
         print(f"Создана стрелка {arrow_id} от {from_block_id} к {to_block_id}")
         return arrow_data
     
-    def create_arrow_from_block_to_point(self, from_block_id, x, y):
+    def create_arrow_from_block_to_point(self, from_block_id, x, y, from_side=None):
         """Создает стрелку от блока к точке на холсте"""
         from_block_data = next((b for b in self.blocks if b["id"] == from_block_id), None)
         if from_block_data is None:
@@ -5328,15 +5684,16 @@ class IDEF0App:
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
-        # Определяем сторону блока на основе направления к точке
-        from_block = from_block_data["model"]
-        dx = x - from_block.x
-        dy = y - from_block.y
-        
-        if abs(dx) > abs(dy):
-            from_side = "right" if dx > 0 else "left"
-        else:
-            from_side = "bottom" if dy > 0 else "top"
+        # Определяем сторону блока на основе направления к точке, если не указана явно
+        if from_side is None:
+            from_block = from_block_data["model"]
+            dx = x - from_block.x
+            dy = y - from_block.y
+            
+            if abs(dx) > abs(dy):
+                from_side = "right" if dx > 0 else "left"
+            else:
+                from_side = "bottom" if dy > 0 else "top"
         
         arrow = Arrow(
             arrow_id=arrow_id,
@@ -5364,7 +5721,7 @@ class IDEF0App:
         print(f"Создана стрелка {arrow_id} от блока {from_block_id} к точке ({x:.1f}, {y:.1f})")
         return arrow_data
     
-    def create_arrow_from_point_to_block(self, x, y, to_block_id):
+    def create_arrow_from_point_to_block(self, x, y, to_block_id, to_side=None):
         """Создает стрелку от точки на холсте к блоку"""
         to_block_data = next((b for b in self.blocks if b["id"] == to_block_id), None)
         if to_block_data is None:
@@ -5374,15 +5731,16 @@ class IDEF0App:
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
-        # Определяем сторону блока на основе направления от точки
-        to_block = to_block_data["model"]
-        dx = to_block.x - x
-        dy = to_block.y - y
-        
-        if abs(dx) > abs(dy):
-            to_side = "left" if dx > 0 else "right"
-        else:
-            to_side = "top" if dy > 0 else "bottom"
+        # Определяем сторону блока на основе направления от точки, если не указана явно
+        if to_side is None:
+            to_block = to_block_data["model"]
+            dx = to_block.x - x
+            dy = to_block.y - y
+            
+            if abs(dx) > abs(dy):
+                to_side = "left" if dx > 0 else "right"
+            else:
+                to_side = "top" if dy > 0 else "bottom"
         
         arrow = Arrow(
             arrow_id=arrow_id,
