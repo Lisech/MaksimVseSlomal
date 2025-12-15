@@ -4821,13 +4821,19 @@ class IDEF0App:
                 self.root.update()
                 
                 # Находим блок по ID модели
+                selected_block_data = None
                 for block_data in self.blocks:
                     if block_data["model"].id == block_id:
                         print(f"Найден блок: {block_data['model'].code}, выделяем...")
                         self.select_block(block_data)
+                        selected_block_data = block_data
                         break
                 else:
                     print(f"Блок с id {block_id} не найден в списке блоков")
+                
+                # Центрируем холст на выбранном блоке
+                if selected_block_data:
+                    self.root.after(100, lambda: self.center_on_block(selected_block_data))
                 
                 # Устанавливаем фокус на canvas после переключения
                 self.canvas.focus_set()
@@ -4918,6 +4924,123 @@ class IDEF0App:
         
         # Устанавливаем фокус на canvas после переключения слоя
         self.canvas.focus_set()
+
+    def center_on_block(self, block_data):
+        """Центрирует холст на указанном блоке"""
+        if not block_data or not block_data.get("rect_id"):
+            return
+        
+        try:
+            # Получаем координаты блока
+            coords = self.canvas.coords(block_data["rect_id"])
+            if len(coords) < 4:
+                return
+            
+            # Вычисляем центр блока
+            center_x = (coords[0] + coords[2]) / 2
+            center_y = (coords[1] + coords[3]) / 2
+            
+            # Получаем размеры холста
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            if canvas_width <= 1 or canvas_height <= 1:
+                # Если размеры еще не установлены, ждем обновления
+                self.root.after(100, lambda: self.center_on_block(block_data))
+                return
+            
+            # Получаем размеры scrollregion
+            scrollregion = self.canvas.cget("scrollregion")
+            if scrollregion:
+                srl = scrollregion.split()
+                if len(srl) >= 4:
+                    min_x, min_y, max_x, max_y = float(srl[0]), float(srl[1]), float(srl[2]), float(srl[3])
+                    scroll_width = max_x - min_x
+                    scroll_height = max_y - min_y
+                    
+                    # Вычисляем позицию прокрутки для центрирования
+                    # xview_moveto принимает значение от 0.0 до 1.0
+                    x_ratio = (center_x - min_x) / scroll_width if scroll_width > 0 else 0.5
+                    y_ratio = (center_y - min_y) / scroll_height if scroll_height > 0 else 0.5
+                    
+                    # Корректируем с учетом размера видимой области
+                    visible_x_ratio = canvas_width / scroll_width if scroll_width > 0 else 0
+                    visible_y_ratio = canvas_height / scroll_height if scroll_height > 0 else 0
+                    
+                    x_view = max(0.0, min(1.0, x_ratio - visible_x_ratio / 2))
+                    y_view = max(0.0, min(1.0, y_ratio - visible_y_ratio / 2))
+                    
+                    self.canvas.xview_moveto(x_view)
+                    self.canvas.yview_moveto(y_view)
+        except (tk.TclError, ValueError, IndexError) as e:
+            print(f"Ошибка при центрировании на блоке: {e}")
+
+    def center_on_blocks(self, blocks_data_list):
+        """Центрирует холст на центре группы блоков"""
+        if not blocks_data_list:
+            return
+        
+        try:
+            # Находим центр всех блоков
+            total_x = 0
+            total_y = 0
+            count = 0
+            
+            for block_data in blocks_data_list:
+                if not block_data or not block_data.get("rect_id"):
+                    continue
+                
+                try:
+                    coords = self.canvas.coords(block_data["rect_id"])
+                    if len(coords) >= 4:
+                        center_x = (coords[0] + coords[2]) / 2
+                        center_y = (coords[1] + coords[3]) / 2
+                        total_x += center_x
+                        total_y += center_y
+                        count += 1
+                except tk.TclError:
+                    continue
+            
+            if count == 0:
+                return
+            
+            # Вычисляем средний центр
+            avg_x = total_x / count
+            avg_y = total_y / count
+            
+            # Получаем размеры холста
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
+            
+            if canvas_width <= 1 or canvas_height <= 1:
+                # Если размеры еще не установлены, ждем обновления
+                self.root.after(100, lambda: self.center_on_blocks(blocks_data_list))
+                return
+            
+            # Получаем размеры scrollregion
+            scrollregion = self.canvas.cget("scrollregion")
+            if scrollregion:
+                srl = scrollregion.split()
+                if len(srl) >= 4:
+                    min_x, min_y, max_x, max_y = float(srl[0]), float(srl[1]), float(srl[2]), float(srl[3])
+                    scroll_width = max_x - min_x
+                    scroll_height = max_y - min_y
+                    
+                    # Вычисляем позицию прокрутки для центрирования
+                    x_ratio = (avg_x - min_x) / scroll_width if scroll_width > 0 else 0.5
+                    y_ratio = (avg_y - min_y) / scroll_height if scroll_height > 0 else 0.5
+                    
+                    # Корректируем с учетом размера видимой области
+                    visible_x_ratio = canvas_width / scroll_width if scroll_width > 0 else 0
+                    visible_y_ratio = canvas_height / scroll_height if scroll_height > 0 else 0
+                    
+                    x_view = max(0.0, min(1.0, x_ratio - visible_x_ratio / 2))
+                    y_view = max(0.0, min(1.0, y_ratio - visible_y_ratio / 2))
+                    
+                    self.canvas.xview_moveto(x_view)
+                    self.canvas.yview_moveto(y_view)
+        except (tk.TclError, ValueError, IndexError) as e:
+            print(f"Ошибка при центрировании на блоках: {e}")
 
     def refresh_canvas(self):
         """Обновляет холст в соответствии с текущим уровнем"""
@@ -6742,41 +6865,10 @@ class IDEF0App:
             for block_data_obj in imported_blocks:
                 self.update_arrows_for_block(block_data_obj["id"])
             
-            # Прокручиваем canvas к импортированным блокам, если они есть
+            # Центрируем холст на импортированных блоках, если они есть
             if imported_blocks:
-                # Находим центр всех импортированных блоков
-                total_x = 0
-                total_y = 0
-                count = 0
-                for block_data_obj in imported_blocks:
-                    try:
-                        coords = self.canvas.coords(block_data_obj["rect_id"])
-                        if len(coords) >= 4:
-                            center_x = (coords[0] + coords[2]) / 2
-                            center_y = (coords[1] + coords[3]) / 2
-                            total_x += center_x
-                            total_y += center_y
-                            count += 1
-                    except tk.TclError:
-                        pass
-                
-                if count > 0:
-                    avg_x = total_x / count
-                    avg_y = total_y / count
-                    # Прокручиваем canvas к центру импортированных блоков
-                    canvas_width = self.canvas.winfo_width()
-                    canvas_height = self.canvas.winfo_height()
-                    
-                    # Используем scan_markto для прокрутки
-                    try:
-                        # Преобразуем координаты canvas в координаты экрана
-                        screen_x = self.canvas.canvasx(avg_x)
-                        screen_y = self.canvas.canvasy(avg_y)
-                        # Прокручиваем так, чтобы центр блоков был в центре видимой области
-                        self.canvas.scan_markto(0, 0)
-                        self.canvas.scan_dragto(int(screen_x - canvas_width / 2), int(screen_y - canvas_height / 2), gain=1)
-                    except Exception as e:
-                        print(f"Ошибка при прокрутке к импортированным блокам: {e}")
+                # Используем отложенное выполнение, чтобы убедиться, что все блоки отрисованы
+                self.root.after(100, lambda: self.center_on_blocks(imported_blocks))
             
             # НЕ вызываем refresh_canvas(), так как блоки уже созданы и интерактивны
             # refresh_canvas() удалит все элементы и перерисует их, что может сломать обработчики событий
