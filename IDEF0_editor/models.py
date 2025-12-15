@@ -2,6 +2,7 @@
 Модели данных
 """
 
+import math
 from styles import Colors
 
 
@@ -385,6 +386,311 @@ class Arrow:
         self.bend_x = data.get("bend_x", self.bend_x)
         self.bend_y = data.get("bend_y", self.bend_y)
         self.text = data.get("text", self.text if hasattr(self, 'text') else "")
+    
+    def calculate_routing_path(self, from_block, to_block, all_blocks):
+        """
+        Вычисляет путь обхода блоков для стрелки с поворотами на 90 градусов
+        
+        Args:
+            from_block: Объект Block или None (начальный блок)
+            to_block: Объект Block или None (конечный блок)
+            all_blocks: Список всех блоков для проверки пересечений
+            
+        Returns:
+            list: Список точек [(x1, y1), (x2, y2), ...] для отрисовки пути
+        """
+        # Сначала вычисляем начальную и конечную точки
+        if from_block:
+            x1, y1 = self._get_side_point(
+                from_block, self.from_side, self.from_attachment_point
+            )
+        else:
+            x1, y1 = self.x1, self.y1
+        
+        if to_block:
+            x2, y2 = self._get_side_point(
+                to_block, self.to_side, self.to_attachment_point
+            )
+        else:
+            x2, y2 = self.x2, self.y2
+        
+        if x1 is None or y1 is None or x2 is None or y2 is None:
+            return [(x1, y1), (x2, y2)]
+        
+        # Проверяем, пересекает ли прямая линия какие-либо блоки
+        # Исключаем начальный и конечный блоки из проверки
+        blocking_blocks = []
+        for block in all_blocks:
+            if block.id == self.from_block_id or block.id == self.to_block_id:
+                continue
+            
+            if self._line_intersects_block(x1, y1, x2, y2, block):
+                blocking_blocks.append(block)
+        
+        # Если нет блокирующих блоков, возвращаем прямую линию
+        if not blocking_blocks:
+            return [(x1, y1), (x2, y2)]
+        
+        # Сортируем блоки по расстоянию от начальной точки (обход ближайших первыми)
+        def block_distance(block):
+            # Вычисляем минимальное расстояние от начальной точки до блока
+            block_left = block.x - block.width / 2
+            block_right = block.x + block.width / 2
+            block_top = block.y - block.height / 2
+            block_bottom = block.y + block.height / 2
+            
+            # Находим ближайшую точку на границе блока к начальной точке
+            closest_x = max(block_left, min(x1, block_right))
+            closest_y = max(block_top, min(y1, block_bottom))
+            
+            dx = closest_x - x1
+            dy = closest_y - y1
+            return math.sqrt(dx*dx + dy*dy)
+        
+        blocking_blocks.sort(key=block_distance)
+        
+        # Вычисляем путь обхода для каждого блокирующего блока по очереди
+        # Для каждого блока обходим его, используя текущую позицию и финальную цель
+        path = [(x1, y1)]
+        current_x, current_y = x1, y1
+        target_x, target_y = x2, y2
+        
+        for block in blocking_blocks:
+            # Обходим текущий блок
+            path_segment = self._route_around_block(
+                current_x, current_y, target_x, target_y, block
+            )
+            # Удаляем первую точку, так как она совпадает с последней точкой предыдущего сегмента
+            if len(path_segment) > 1:
+                path.extend(path_segment[1:])
+                # Обновляем текущую позицию на последнюю точку обхода
+                current_x, current_y = path_segment[-1]
+        
+        return path
+    
+    def _line_intersects_block(self, x1, y1, x2, y2, block):
+        """
+        Проверяет, пересекает ли прямая линия блок
+        
+        Args:
+            x1, y1: Начальная точка линии
+            x2, y2: Конечная точка линии
+            block: Объект Block
+            
+        Returns:
+            bool: True если линия пересекает блок
+        """
+        # Границы блока
+        block_left = block.x - block.width / 2
+        block_right = block.x + block.width / 2
+        block_top = block.y - block.height / 2
+        block_bottom = block.y + block.height / 2
+        
+        # Проверяем, находится ли хотя бы одна точка внутри блока
+        if (block_left <= x1 <= block_right and block_top <= y1 <= block_bottom):
+            return True
+        if (block_left <= x2 <= block_right and block_top <= y2 <= block_bottom):
+            return True
+        
+        # Проверяем пересечение линии с границами прямоугольника
+        # Используем алгоритм Liang-Barsky для проверки пересечения отрезка с прямоугольником
+        dx = x2 - x1
+        dy = y2 - y1
+        
+        # Проверяем пересечение с каждой стороной прямоугольника
+        # Верхняя сторона
+        if dy != 0:
+            t = (block_top - y1) / dy
+            if 0 <= t <= 1:
+                x = x1 + t * dx
+                if block_left <= x <= block_right:
+                    return True
+        
+        # Нижняя сторона
+        if dy != 0:
+            t = (block_bottom - y1) / dy
+            if 0 <= t <= 1:
+                x = x1 + t * dx
+                if block_left <= x <= block_right:
+                    return True
+        
+        # Левая сторона
+        if dx != 0:
+            t = (block_left - x1) / dx
+            if 0 <= t <= 1:
+                y = y1 + t * dy
+                if block_top <= y <= block_bottom:
+                    return True
+        
+        # Правая сторона
+        if dx != 0:
+            t = (block_right - x1) / dx
+            if 0 <= t <= 1:
+                y = y1 + t * dy
+                if block_top <= y <= block_bottom:
+                    return True
+        
+        return False
+    
+    def _route_around_block(self, x1, y1, x2, y2, block):
+        """
+        Вычисляет путь обхода одного блока с поворотами на 90 градусов
+        
+        Args:
+            x1, y1: Начальная точка
+            x2, y2: Конечная точка
+            block: Объект Block для обхода
+            
+        Returns:
+            list: Список точек [(x1, y1), (x2, y2), ...] для обхода блока
+        """
+        # Границы блока с небольшим отступом
+        padding = 5
+        block_left = block.x - block.width / 2 - padding
+        block_right = block.x + block.width / 2 + padding
+        block_top = block.y - block.height / 2 - padding
+        block_bottom = block.y + block.height / 2 + padding
+        
+        # Генерируем 4 возможных пути обхода (сверху, снизу, слева, справа)
+        paths = []
+        
+        # Путь 1: обход сверху
+        path_top = []
+        # От начальной точки до верхней границы блока
+        if x1 < block_left:
+            path_top.append((block_left, y1))
+            path_top.append((block_left, block_top))
+        elif x1 > block_right:
+            path_top.append((block_right, y1))
+            path_top.append((block_right, block_top))
+        else:
+            path_top.append((x1, block_top))
+        
+        # По верхней границе до точки над конечной координатой
+        path_top.append((x2, block_top))
+        
+        # От верхней границы до конечной точки
+        if x2 < block_left:
+            path_top.append((block_left, block_top))
+            path_top.append((block_left, y2))
+        elif x2 > block_right:
+            path_top.append((block_right, block_top))
+            path_top.append((block_right, y2))
+        paths.append(("top", path_top))
+        
+        # Путь 2: обход снизу
+        path_bottom = []
+        # От начальной точки до нижней границы блока
+        if x1 < block_left:
+            path_bottom.append((block_left, y1))
+            path_bottom.append((block_left, block_bottom))
+        elif x1 > block_right:
+            path_bottom.append((block_right, y1))
+            path_bottom.append((block_right, block_bottom))
+        else:
+            path_bottom.append((x1, block_bottom))
+        
+        # По нижней границе до точки под конечной координатой
+        path_bottom.append((x2, block_bottom))
+        
+        # От нижней границы до конечной точки
+        if x2 < block_left:
+            path_bottom.append((block_left, block_bottom))
+            path_bottom.append((block_left, y2))
+        elif x2 > block_right:
+            path_bottom.append((block_right, block_bottom))
+            path_bottom.append((block_right, y2))
+        paths.append(("bottom", path_bottom))
+        
+        # Путь 3: обход слева
+        path_left = []
+        # От начальной точки до левой границы блока
+        if y1 < block_top:
+            path_left.append((x1, block_top))
+            path_left.append((block_left, block_top))
+        elif y1 > block_bottom:
+            path_left.append((x1, block_bottom))
+            path_left.append((block_left, block_bottom))
+        else:
+            path_left.append((block_left, y1))
+        
+        # По левой границе до точки слева от конечной координаты
+        path_left.append((block_left, y2))
+        
+        # От левой границы до конечной точки
+        if y2 < block_top:
+            path_left.append((block_left, block_top))
+            path_left.append((x2, block_top))
+        elif y2 > block_bottom:
+            path_left.append((block_left, block_bottom))
+            path_left.append((x2, block_bottom))
+        paths.append(("left", path_left))
+        
+        # Путь 4: обход справа
+        path_right = []
+        # От начальной точки до правой границы блока
+        if y1 < block_top:
+            path_right.append((x1, block_top))
+            path_right.append((block_right, block_top))
+        elif y1 > block_bottom:
+            path_right.append((x1, block_bottom))
+            path_right.append((block_right, block_bottom))
+        else:
+            path_right.append((block_right, y1))
+        
+        # По правой границе до точки справа от конечной координаты
+        path_right.append((block_right, y2))
+        
+        # От правой границы до конечной точки
+        if y2 < block_top:
+            path_right.append((block_right, block_top))
+            path_right.append((x2, block_top))
+        elif y2 > block_bottom:
+            path_right.append((block_right, block_bottom))
+            path_right.append((x2, block_bottom))
+        paths.append(("right", path_right))
+        
+        # Выбираем самый короткий путь
+        min_length = float('inf')
+        best_path = None
+        
+        for name, path in paths:
+            # Вычисляем длину пути: от (x1,y1) через path до (x2,y2)
+            length = 0
+            
+            # От начальной точки до первой точки пути
+            if len(path) > 0:
+                dx = path[0][0] - x1
+                dy = path[0][1] - y1
+                length += math.sqrt(dx*dx + dy*dy)
+            
+            # Между точками пути
+            for i in range(len(path) - 1):
+                dx = path[i+1][0] - path[i][0]
+                dy = path[i+1][1] - path[i][1]
+                length += math.sqrt(dx*dx + dy*dy)
+            
+            # От последней точки пути до конечной точки
+            if len(path) > 0:
+                dx = x2 - path[-1][0]
+                dy = y2 - path[-1][1]
+                length += math.sqrt(dx*dx + dy*dy)
+            
+            if length < min_length:
+                min_length = length
+                best_path = path
+        
+        if best_path:
+            # Удаляем дубликаты последовательных точек
+            cleaned_path = [(x1, y1)]
+            for point in best_path:
+                if len(cleaned_path) == 0 or point != cleaned_path[-1]:
+                    cleaned_path.append(point)
+            if len(cleaned_path) == 0 or (x2, y2) != cleaned_path[-1]:
+                cleaned_path.append((x2, y2))
+            return cleaned_path
+        else:
+            return [(x1, y1), (x2, y2)]
 
 
 class LayerManager:
