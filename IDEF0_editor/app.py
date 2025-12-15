@@ -60,6 +60,7 @@ class IDEF0App:
         self.arrow_action_buttons = []
         self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
         self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
+        self.dragging_arrow_bend = False  # перетаскивание средней точки изгиба
         self.arrow_drawing_mode = False  # режим рисования стрелок
         self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
         self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
@@ -2511,6 +2512,9 @@ class IDEF0App:
                 new_arrow_data["arrow"].color = arrow.color
                 new_arrow_data["arrow"].width = arrow.width
                 new_arrow_data["arrow"].style = arrow.style
+                # Копируем изгиб (если был задан)
+                new_arrow_data["arrow"].bend_x = arrow.bend_x
+                new_arrow_data["arrow"].bend_y = arrow.bend_y
                 self.draw_arrow(new_arrow_data)
     
     def delete_arrow_direct(self, arrow_data):
@@ -2568,6 +2572,39 @@ class IDEF0App:
         self.canvas.tag_raise(handle_start)
         self.canvas.tag_raise(handle_end)
         
+        # Средний маркер для изгиба (waypoint).
+        # Важно: сам bend в модели НЕ включаем, пока пользователь не сдвинет ручку.
+        try:
+            routing_path = arrow_data.get("routing_path")
+            if routing_path and len(routing_path) >= 2:
+                # Берём середину по индексу (достаточно хорошо визуально)
+                mid_idx = len(routing_path) // 2
+                mid_x, mid_y = routing_path[mid_idx]
+            else:
+                mid_x = (arrow.display_x1 + arrow.display_x2) / 2
+                mid_y = (arrow.display_y1 + arrow.display_y2) / 2
+        except Exception:
+            mid_x = (arrow.display_x1 + arrow.display_x2) / 2
+            mid_y = (arrow.display_y1 + arrow.display_y2) / 2
+        
+        # Если у стрелки уже есть сохранённый изгиб — показываем ручку там
+        if arrow.bend_x is not None and arrow.bend_y is not None:
+            mid_x, mid_y = arrow.bend_x, arrow.bend_y
+        
+        bend_size = 10  # чуть меньше, чем у концов
+        bend_outline_color = Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE
+        bend_outline_width = 3 if self.is_dark_theme else 1
+        handle_bend = self.canvas.create_oval(
+            mid_x - bend_size, mid_y - bend_size,
+            mid_x + bend_size, mid_y + bend_size,
+            fill=Colors.HANDLE_FILL,
+            outline=bend_outline_color,
+            width=bend_outline_width,
+            tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
+        )
+        self.arrow_drag_handles[arrow.id]["bend"] = handle_bend
+        self.canvas.tag_raise(handle_bend)
+        
         # Привязываем обработчики для перетаскивания
         self.canvas.tag_bind(handle_start, "<ButtonPress-1>", 
                            lambda e, a=arrow_data: self.start_arrow_drag(e, a, "start"))
@@ -2582,6 +2619,18 @@ class IDEF0App:
                            lambda e, a=arrow_data: self.do_arrow_drag(e, a, "end"))
         self.canvas.tag_bind(handle_end, "<ButtonRelease-1>", 
                            lambda e, a=arrow_data: self.end_arrow_drag(e, a))
+        
+        # Перетаскивание изгиба
+        self.canvas.tag_bind(handle_bend, "<ButtonPress-1>",
+                           lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
+        self.canvas.tag_bind(handle_bend, "<B1-Motion>",
+                           lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
+        self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>",
+                           lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
+        
+        # Double click по средней ручке — сброс изгиба
+        self.canvas.tag_bind(handle_bend, "<Double-Button-1>",
+                           lambda e, a=arrow_data: self.reset_arrow_bend(e, a))
     
     def delete_arrow_drag_handles(self):
         """Удаляет маркеры перетаскивания стрелки."""
@@ -2621,8 +2670,82 @@ class IDEF0App:
             self.canvas.coords(handles["end"],
                              arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
                              arrow.display_x2 + handle_size, arrow.display_y2 + handle_size)
+            # Средняя ручка: если есть bend — показываем там, иначе в середине текущего routing_path/между концами
+            if handles.get("bend"):
+                bx, by = arrow.bend_x, arrow.bend_y
+                if bx is None or by is None:
+                    routing_path = arrow_data.get("routing_path")
+                    if routing_path and len(routing_path) >= 2:
+                        mid_idx = len(routing_path) // 2
+                        bx, by = routing_path[mid_idx]
+                    else:
+                        bx = (arrow.display_x1 + arrow.display_x2) / 2
+                        by = (arrow.display_y1 + arrow.display_y2) / 2
+                bend_size = 10
+                self.canvas.coords(handles["bend"],
+                                 bx - bend_size, by - bend_size,
+                                 bx + bend_size, by + bend_size)
         except tk.TclError:
             pass
+
+    def start_arrow_bend_drag(self, event, arrow_data):
+        """Начало перетаскивания средней точки изгиба стрелки."""
+        if self.current_mode != "select":
+            return
+        self.dragging_arrow_bend = True
+        arrow = arrow_data["arrow"]
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        
+        # Если пользователь вручную двигает bend — это явная ручная правка, размораживаем авто-маршрут.
+        arrow.route_locked = False
+        arrow.locked_path = None
+        
+        # Если bend ещё не задан — «активируем» его на текущей позиции ручки, чтобы далее он сохранялся.
+        if arrow.bend_x is None or arrow.bend_y is None:
+            arrow.bend_x = x
+            arrow.bend_y = y
+        
+        arrow_data["bend_drag_data"] = {
+            "offset_x": x - arrow.bend_x,
+            "offset_y": y - arrow.bend_y
+        }
+        return "break"
+
+    def do_arrow_bend_drag(self, event, arrow_data):
+        """Перетаскивание средней точки изгиба."""
+        if not self.dragging_arrow_bend or "bend_drag_data" not in arrow_data:
+            return
+        arrow = arrow_data["arrow"]
+        x = self.canvas.canvasx(event.x)
+        y = self.canvas.canvasy(event.y)
+        off = arrow_data["bend_drag_data"]
+        
+        arrow.bend_x = x - off.get("offset_x", 0)
+        arrow.bend_y = y - off.get("offset_y", 0)
+        
+        # Перерисовываем с учётом bend-waypoint
+        self.draw_arrow(arrow_data)
+        self.update_arrow_drag_handles(arrow_data)
+        self.update_arrow_action_buttons_position(arrow_data)
+        return "break"
+
+    def end_arrow_bend_drag(self, event, arrow_data):
+        """Завершение перетаскивания изгиба."""
+        if "bend_drag_data" in arrow_data:
+            del arrow_data["bend_drag_data"]
+        self.dragging_arrow_bend = False
+        return "break"
+
+    def reset_arrow_bend(self, event, arrow_data):
+        """Сбрасывает пользовательский изгиб (возвращает авто-роутинг)."""
+        arrow = arrow_data["arrow"]
+        arrow.bend_x = None
+        arrow.bend_y = None
+        self.draw_arrow(arrow_data)
+        self.update_arrow_drag_handles(arrow_data)
+        self.update_arrow_action_buttons_position(arrow_data)
+        return "break"
     
     def start_arrow_drag(self, event, arrow_data, end_type):
         """Начало перетаскивания конца стрелки."""
@@ -2632,6 +2755,10 @@ class IDEF0App:
         arrow = arrow_data["arrow"]
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
+        
+        # Любое ручное редактирование конца — размораживаем авто-маршрут
+        arrow.route_locked = False
+        arrow.locked_path = None
         
         # ВАЖНО: Сразу открепляем стрелку при начале перетаскивания, если она была прикреплена
         # Это позволяет открепить и двигать стрелку в одно действие
@@ -2770,6 +2897,15 @@ class IDEF0App:
                 distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
                 # Прикрепляем только если достаточно близко к точке прикрепления
                 if distance <= attachment_threshold:
+                    # Замораживаем текущий авто-маршрут (колена) перед прикреплением,
+                    # чтобы прикрепление не "пересчитывало" форму стрелки.
+                    try:
+                        rp = arrow_data.get("routing_path")
+                        if rp and len(rp) >= 2:
+                            arrow.route_locked = True
+                            arrow.locked_path = [[p[0], p[1]] for p in rp]
+                    except Exception:
+                        pass
                     arrow.connect_to_block(block_id, side, is_start=True, attachment_point=point_index)
                     arrow.display_x1 = point_x
                     arrow.display_y1 = point_y
@@ -2792,6 +2928,14 @@ class IDEF0App:
                 distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
                 # Прикрепляем только если достаточно близко к точке прикрепления
                 if distance <= attachment_threshold:
+                    # Замораживаем текущий авто-маршрут (колена) перед прикреплением
+                    try:
+                        rp = arrow_data.get("routing_path")
+                        if rp and len(rp) >= 2:
+                            arrow.route_locked = True
+                            arrow.locked_path = [[p[0], p[1]] for p in rp]
+                    except Exception:
+                        pass
                     arrow.connect_to_block(block_id, side, is_start=False, attachment_point=point_index)
                     arrow.display_x2 = point_x
                     arrow.display_y2 = point_y
@@ -2819,6 +2963,8 @@ class IDEF0App:
                 self.canvas.tag_raise(handles["start"])
             if handles.get("end"):
                 self.canvas.tag_raise(handles["end"])
+            if handles.get("bend"):
+                self.canvas.tag_raise(handles["bend"])
         
         # Обновляем маркеры (позиции)
         self.update_arrow_drag_handles(arrow_data)
@@ -4685,8 +4831,103 @@ class IDEF0App:
         # Получаем список всех блоков для проверки пересечений
         all_blocks = [b["model"] for b in self.blocks]
         
-        # Вычисляем путь обхода блоков
-        routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
+        def _dedupe_consecutive(points):
+            if not points:
+                return points
+            out = [points[0]]
+            for p in points[1:]:
+                if p != out[-1]:
+                    out.append(p)
+            return out
+        
+        def _coerce_path(path):
+            """locked_path хранится как [[x,y],...]; приводим к [(x,y),...]"""
+            if not path:
+                return None
+            out = []
+            for p in path:
+                try:
+                    out.append((float(p[0]), float(p[1])))
+                except Exception:
+                    return None
+            return out
+        
+        def _apply_locked_endpoints(path, new_start, new_end):
+            """
+            Подтягиваем начало/конец к новым точкам, сохраняя внутренние колена.
+            Важно: НЕ двигаем внутренние точки (чтобы attach не "сбрасывал" авто-колена),
+            а при необходимости добавляем по одному дополнительному колену у начала/конца.
+            """
+            if not path or len(path) < 2:
+                return [new_start, new_end]
+            if len(path) == 2:
+                return [new_start, new_end]
+            
+            old0 = path[0]
+            old1 = path[1]
+            oldn_1 = path[-2]
+            oldn = path[-1]
+            
+            inner = list(path[1:-1])
+            if not inner:
+                return [new_start, new_end]
+            
+            out = [new_start]
+            
+            # Старт: соединяем new_start с первой внутренней точкой, не трогая её.
+            first = inner[0]
+            if new_start != first:
+                if new_start[0] != first[0] and new_start[1] != first[1]:
+                    # Ориентация старого первого сегмента (old start -> old1)
+                    dx0 = abs(old0[0] - old1[0])
+                    dy0 = abs(old0[1] - old1[1])
+                    if dx0 < dy0:
+                        # старый сегмент был "вертикальный" → последний подлёт к first делаем вертикальным (x = new_start.x)
+                        out.append((new_start[0], first[1]))
+                    else:
+                        # старый сегмент был "горизонтальный" → последний подлёт к first делаем горизонтальным (y = new_start.y)
+                        out.append((first[0], new_start[1]))
+                out.append(first)
+            else:
+                out.append(first)
+            
+            # Внутренние точки сохраняем как есть
+            if len(inner) > 1:
+                out.extend(inner[1:])
+            
+            # Конец: соединяем последнюю внутреннюю точку с new_end, не трогая внутреннюю.
+            last = out[-1]
+            if last != new_end:
+                if last[0] != new_end[0] and last[1] != new_end[1]:
+                    dx1 = abs(oldn_1[0] - oldn[0])
+                    dy1 = abs(oldn_1[1] - oldn[1])
+                    if dx1 < dy1:
+                        # старый последний сегмент был вертикальный → подлёт к new_end делаем вертикальным (x = new_end.x)
+                        out.append((new_end[0], last[1]))
+                    else:
+                        # старый последний сегмент был горизонтальный → подлёт к new_end делаем горизонтальным (y = new_end.y)
+                        out.append((last[0], new_end[1]))
+                out.append(new_end)
+            
+            return _dedupe_consecutive(out)
+        
+        # Вычисляем путь (обычный авто-роутинг или замороженный)
+        routing_path = None
+        if getattr(arrow, "route_locked", False) and getattr(arrow, "locked_path", None):
+            base = _coerce_path(arrow.locked_path)
+            if base and len(base) >= 2:
+                routing_path = _apply_locked_endpoints(base, (x1, y1), (x2, y2))
+                # Обновляем замороженный путь текущими координатами (для сохранения/undo)
+                arrow.locked_path = [[p[0], p[1]] for p in routing_path]
+            else:
+                # Некорректный формат — сбрасываем
+                arrow.route_locked = False
+                arrow.locked_path = None
+        
+        if not routing_path:
+            routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
+        # Сохраняем путь для позиционирования ручки изгиба и прочих UI-элементов
+        arrow_data["routing_path"] = routing_path
         
         if len(routing_path) < 2:
             print(f"Ошибка: Путь обхода содержит менее 2 точек для стрелки {arrow.id}")
@@ -5224,6 +5465,8 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
+                "route_locked": getattr(arrow, "route_locked", False),
+                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
@@ -5299,7 +5542,9 @@ class IDEF0App:
                 y1=arrow_dict["y1"],
                 x2=arrow_dict["x2"],
                 y2=arrow_dict["y2"],
-                text=arrow_dict.get("text", "")
+                text=arrow_dict.get("text", ""),
+                route_locked=arrow_dict.get("route_locked", False),
+                locked_path=arrow_dict.get("locked_path")
             )
             arrow.from_attachment_point = arrow_dict.get("from_attachment_point")
             arrow.to_attachment_point = arrow_dict.get("to_attachment_point")
@@ -5407,6 +5652,8 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
+                "route_locked": getattr(arrow, "route_locked", False),
+                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
@@ -5546,6 +5793,8 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
+                "route_locked": getattr(arrow, "route_locked", False),
+                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else "",
                 "display_x1": arrow.display_x1,
                 "display_y1": arrow.display_y1,
@@ -5748,6 +5997,24 @@ class IDEF0App:
                 new_arrow.style = arrow_data.get("style", "solid")
                 new_arrow.bend_x = arrow_data.get("bend_x")
                 new_arrow.bend_y = arrow_data.get("bend_y")
+                
+                # Восстанавливаем замороженный авто-маршрут (если был) и переносим его вместе со стрелкой
+                try:
+                    if arrow_data.get("route_locked") and arrow_data.get("locked_path"):
+                        base = arrow_data.get("locked_path")
+                        # Смещение относительно исходной первой точки
+                        original_x1 = arrow_data.get("display_x1", arrow_data.get("x1", new_x1))
+                        original_y1 = arrow_data.get("display_y1", arrow_data.get("y1", new_y1))
+                        dx_shift = new_x1 - original_x1
+                        dy_shift = new_y1 - original_y1
+                        shifted = []
+                        for p in base:
+                            shifted.append([float(p[0]) + dx_shift, float(p[1]) + dy_shift])
+                        new_arrow.route_locked = True
+                        new_arrow.locked_path = shifted
+                except Exception:
+                    new_arrow.route_locked = False
+                    new_arrow.locked_path = None
                 self.draw_arrow(new_arrow_data)
                 self.select_arrow(new_arrow_data)
     
