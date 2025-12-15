@@ -4462,6 +4462,13 @@ class IDEF0App:
         # Обновляем холст
         self.refresh_canvas()
         
+        # После переключения уровня возвращаемся в режим выбора:
+        # иначе пользователь может остаться в pan/draw_arrow и "клики по блокам" не будут выделять.
+        try:
+            self.enable_select_mode()
+        except Exception:
+            pass
+        
         # Восстанавливаем позицию прокрутки если есть сохраненное состояние
         state = self.layer_manager.get_level_state(level_key)
         if state:
@@ -5795,6 +5802,10 @@ class IDEF0App:
                 
                 # Обновляем canvas для текущего уровня (показываем только корневой уровень)
                 self.refresh_canvas()
+                
+                # Гарантируем режим выбора после загрузки проекта
+                self.enable_select_mode()
+                self.canvas.focus_set()
                 
                 # Обновляем интерфейс
                 self.update_footer_info()
