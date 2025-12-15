@@ -61,6 +61,9 @@ class IDEF0App:
         self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
         self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
         self.dragging_arrow_bend = False  # перетаскивание средней точки изгиба
+        # Режим "создать точку сгиба": следующий клик по холсту ставит bend-точку.
+        self.add_bend_mode = False
+        self.add_bend_arrow_data = None
         self.arrow_drawing_mode = False  # режим рисования стрелок
         self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
         self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
@@ -2424,11 +2427,14 @@ class IDEF0App:
         
         buttons_spec = [
             ("copy", "Копировать", "Copy"),
+            ("add_bend", "Создать точку сгиба", "Square"),
+            ("unlock_route", "Разморозить маршрут", "Undo"),
             ("delete", "Удалить", "Close"),
         ]
         
         self.arrow_action_buttons = []
         
+        mid_offset = (len(buttons_spec) - 1) / 2
         for index, (action, tooltip, icon_name) in enumerate(buttons_spec):
             btn = tk.Button(
                 self.canvas,
@@ -2446,12 +2452,16 @@ class IDEF0App:
             
             if action == "copy":
                 btn.configure(command=lambda a=arrow_data: self.copy_arrow(a))
+            elif action == "add_bend":
+                btn.configure(command=lambda a=arrow_data: self.enable_add_bend_mode(a))
+            elif action == "unlock_route":
+                btn.configure(command=lambda a=arrow_data: self.unlock_arrow_route(a))
             elif action == "delete":
                 btn.configure(command=lambda a=arrow_data: self.delete_arrow_direct(a))
             
             self.apply_hover_effect(btn, enable=False)
             
-            y = base_y + (index - 1) * spacing
+            y = base_y + (index - mid_offset) * spacing
             win_id = self.canvas.create_window(
                 base_x,
                 y,
@@ -2473,13 +2483,67 @@ class IDEF0App:
         base_x = mid_x + 24
         base_y = mid_y
         spacing = 32
+        mid_offset = (len(self.arrow_action_buttons) - 1) / 2
         
         for index, data in enumerate(self.arrow_action_buttons):
-            y = base_y + (index - 1) * spacing
+            y = base_y + (index - mid_offset) * spacing
             try:
                 self.canvas.coords(data["window_id"], base_x, y)
             except tk.TclError:
                 continue
+
+    def unlock_arrow_route(self, arrow_data):
+        """Размораживает авто-маршрут стрелки: возвращает обычный авто-роутинг."""
+        if not arrow_data:
+            return
+        arrow = arrow_data.get("arrow")
+        if not arrow:
+            return
+        # Сохраняем состояние для undo ДО изменения
+        self.save_state()
+        arrow.route_locked = False
+        arrow.locked_path = None
+        self.draw_arrow(arrow_data)
+        self.update_arrow_drag_handles(arrow_data)
+        self.update_arrow_action_buttons_position(arrow_data)
+
+    def enable_add_bend_mode(self, arrow_data):
+        """
+        Включает режим создания точки сгиба: следующий клик по холсту поставит bend_x/bend_y.
+        Ничего не делает сразу.
+        """
+        if not arrow_data:
+            return
+        if self.selected_arrow != arrow_data:
+            self.select_arrow(arrow_data)
+        self.add_bend_mode = True
+        self.add_bend_arrow_data = arrow_data
+        try:
+            self.canvas.configure(cursor="crosshair")
+        except Exception:
+            pass
+
+    def _exit_add_bend_mode(self):
+        self.add_bend_mode = False
+        self.add_bend_arrow_data = None
+        try:
+            # Возвращаем обычный курсор выбора
+            if self.current_mode == "select":
+                self.canvas.configure(cursor="")
+        except Exception:
+            pass
+
+    def set_arrow_bend_point(self, arrow_data, x, y):
+        """Ставит точку сгиба для стрелки (bend_x/bend_y)."""
+        arrow = arrow_data.get("arrow")
+        if not arrow:
+            return
+        self.save_state()
+        arrow.bend_x = float(x)
+        arrow.bend_y = float(y)
+        self.draw_arrow(arrow_data)
+        self.update_arrow_drag_handles(arrow_data)
+        self.update_arrow_action_buttons_position(arrow_data)
     
     def hide_arrow_action_buttons(self):
         """Удаляет кнопки действий для стрелки с холста."""
@@ -2572,38 +2636,24 @@ class IDEF0App:
         self.canvas.tag_raise(handle_start)
         self.canvas.tag_raise(handle_end)
         
-        # Средний маркер для изгиба (waypoint).
-        # Важно: сам bend в модели НЕ включаем, пока пользователь не сдвинет ручку.
-        try:
-            routing_path = arrow_data.get("routing_path")
-            if routing_path and len(routing_path) >= 2:
-                # Берём середину по индексу (достаточно хорошо визуально)
-                mid_idx = len(routing_path) // 2
-                mid_x, mid_y = routing_path[mid_idx]
-            else:
-                mid_x = (arrow.display_x1 + arrow.display_x2) / 2
-                mid_y = (arrow.display_y1 + arrow.display_y2) / 2
-        except Exception:
-            mid_x = (arrow.display_x1 + arrow.display_x2) / 2
-            mid_y = (arrow.display_y1 + arrow.display_y2) / 2
-        
-        # Если у стрелки уже есть сохранённый изгиб — показываем ручку там
+        # Средняя ручка сгиба показывается ТОЛЬКО если bend задан явно (через кнопку),
+        # чтобы при захвате конца стрелки не появлялась "третья точка" сама по себе.
+        handle_bend = None
         if arrow.bend_x is not None and arrow.bend_y is not None:
             mid_x, mid_y = arrow.bend_x, arrow.bend_y
-        
-        bend_size = 10  # чуть меньше, чем у концов
-        bend_outline_color = Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE
-        bend_outline_width = 3 if self.is_dark_theme else 1
-        handle_bend = self.canvas.create_oval(
-            mid_x - bend_size, mid_y - bend_size,
-            mid_x + bend_size, mid_y + bend_size,
-            fill=Colors.HANDLE_FILL,
-            outline=bend_outline_color,
-            width=bend_outline_width,
-            tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
-        )
-        self.arrow_drag_handles[arrow.id]["bend"] = handle_bend
-        self.canvas.tag_raise(handle_bend)
+            bend_size = 10  # чуть меньше, чем у концов
+            bend_outline_color = Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE
+            bend_outline_width = 3 if self.is_dark_theme else 1
+            handle_bend = self.canvas.create_oval(
+                mid_x - bend_size, mid_y - bend_size,
+                mid_x + bend_size, mid_y + bend_size,
+                fill=Colors.HANDLE_FILL,
+                outline=bend_outline_color,
+                width=bend_outline_width,
+                tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
+            )
+            self.arrow_drag_handles[arrow.id]["bend"] = handle_bend
+            self.canvas.tag_raise(handle_bend)
         
         # Привязываем обработчики для перетаскивания
         self.canvas.tag_bind(handle_start, "<ButtonPress-1>", 
@@ -2620,17 +2670,18 @@ class IDEF0App:
         self.canvas.tag_bind(handle_end, "<ButtonRelease-1>", 
                            lambda e, a=arrow_data: self.end_arrow_drag(e, a))
         
-        # Перетаскивание изгиба
-        self.canvas.tag_bind(handle_bend, "<ButtonPress-1>",
-                           lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
-        self.canvas.tag_bind(handle_bend, "<B1-Motion>",
-                           lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
-        self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>",
-                           lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
-        
-        # Double click по средней ручке — сброс изгиба
-        self.canvas.tag_bind(handle_bend, "<Double-Button-1>",
-                           lambda e, a=arrow_data: self.reset_arrow_bend(e, a))
+        if handle_bend:
+            # Перетаскивание изгиба
+            self.canvas.tag_bind(handle_bend, "<ButtonPress-1>",
+                               lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
+            self.canvas.tag_bind(handle_bend, "<B1-Motion>",
+                               lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
+            self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>",
+                               lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
+            
+            # Double click по средней ручке — сброс изгиба
+            self.canvas.tag_bind(handle_bend, "<Double-Button-1>",
+                               lambda e, a=arrow_data: self.reset_arrow_bend(e, a))
     
     def delete_arrow_drag_handles(self):
         """Удаляет маркеры перетаскивания стрелки."""
@@ -2670,17 +2721,9 @@ class IDEF0App:
             self.canvas.coords(handles["end"],
                              arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
                              arrow.display_x2 + handle_size, arrow.display_y2 + handle_size)
-            # Средняя ручка: если есть bend — показываем там, иначе в середине текущего routing_path/между концами
-            if handles.get("bend"):
+            # Средняя ручка: обновляем только если она реально существует (bend задан явно)
+            if handles.get("bend") and arrow.bend_x is not None and arrow.bend_y is not None:
                 bx, by = arrow.bend_x, arrow.bend_y
-                if bx is None or by is None:
-                    routing_path = arrow_data.get("routing_path")
-                    if routing_path and len(routing_path) >= 2:
-                        mid_idx = len(routing_path) // 2
-                        bx, by = routing_path[mid_idx]
-                    else:
-                        bx = (arrow.display_x1 + arrow.display_x2) / 2
-                        by = (arrow.display_y1 + arrow.display_y2) / 2
                 bend_size = 10
                 self.canvas.coords(handles["bend"],
                                  bx - bend_size, by - bend_size,
@@ -3561,6 +3604,15 @@ class IDEF0App:
 
     def on_canvas_click(self, event):
         """Обработчик клика по холсту"""
+        # Режим "создать точку сгиба": следующий клик по холсту ставит bend-точку
+        if self.add_bend_mode and self.add_bend_arrow_data:
+            x = self.canvas.canvasx(event.x)
+            y = self.canvas.canvasy(event.y)
+            try:
+                self.set_arrow_bend_point(self.add_bend_arrow_data, x, y)
+            finally:
+                self._exit_add_bend_mode()
+            return "break"
         if self.is_panning:
             # Если включено панорамирование (пробел зажат), начинаем панорамирование
             self.canvas.scan_mark(event.x, event.y)

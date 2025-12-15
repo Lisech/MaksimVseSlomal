@@ -196,6 +196,9 @@ class Arrow:
         self.route_locked = route_locked
         # Храним как список списков [[x,y], ...] (JSON-friendly)
         self.locked_path = locked_path
+        
+        # Отступ конца стрелки от границы блока (в пикселях), чтобы линия не "лежала" на краю блока
+        self.endpoint_clearance = 12.0
     
     def calculate_connection_points(self, from_block, to_block):
         """
@@ -246,7 +249,9 @@ class Arrow:
         if attachment_point is not None:
             return self._get_attachment_point(block, side, attachment_point)
         
-        # Иначе возвращаем центр стороны (старое поведение)
+        # Иначе возвращаем центр стороны (НА границе блока).
+        # Отступ для трассировки применяется отдельно в calculate_routing_path(),
+        # чтобы наконечник стрелки был вплотную к блоку и "смотрел" в блок.
         if side == "left":
             return (x - width / 2, y)
         elif side == "right":
@@ -277,6 +282,7 @@ class Arrow:
         height = block.height
         
         # Вычисляем позицию точки на стороне (0 = начало, 1 = середина, 2 = конец)
+        # НА границе блока. Отступ для трассировки применяется отдельно.
         if side == "left" or side == "right":
             # Вертикальная сторона
             offset = (point_index - 1) * (height / 3)  # -height/3, 0, height/3
@@ -584,27 +590,59 @@ class Arrow:
             excluded_ids.add(self.from_block_id)
         if self.to_block_id:
             excluded_ids.add(self.to_block_id)
+
+        # Для трассировки используем точки чуть СНАРУЖИ от блока,
+        # но сам наконечник/конец стрелки оставляем ВПЛОТНУЮ к блоку (x1,y1 и x2,y2).
+        def _offset_outwards(px, py, side, clearance):
+            if side == "left":
+                return (px - clearance, py)
+            if side == "right":
+                return (px + clearance, py)
+            if side == "top":
+                return (px, py - clearance)
+            if side == "bottom":
+                return (px, py + clearance)
+            return (px, py)
+
+        c = float(getattr(self, "endpoint_clearance", 12.0) or 0.0)
+        route_x1, route_y1 = x1, y1
+        route_x2, route_y2 = x2, y2
+        if from_block and self.from_side:
+            route_x1, route_y1 = _offset_outwards(x1, y1, self.from_side, c)
+        if to_block and self.to_side:
+            route_x2, route_y2 = _offset_outwards(x2, y2, self.to_side, c)
         
         # Если задан bend (waypoint), строим путь в 2 этапа: start->bend и bend->end.
         # Это гарантирует, что пользовательский изгиб НЕ сбрасывается при прикреплении.
         bx, by = self.bend_x, self.bend_y
         if bx is not None and by is not None:
             # Защита от вырожденных случаев, чтобы не "ломать" путь, если bend совпал с концом
-            if (abs(bx - x1) + abs(by - y1) < 0.5) or (abs(bx - x2) + abs(by - y2) < 0.5):
+            if (abs(bx - route_x1) + abs(by - route_y1) < 0.5) or (abs(bx - route_x2) + abs(by - route_y2) < 0.5):
                 bx = by = None
         
         if bx is not None and by is not None:
-            p1 = _calculate_path_between_points(x1, y1, bx, by, all_blocks, excluded_ids)
-            p2 = _calculate_path_between_points(bx, by, x2, y2, all_blocks, excluded_ids)
+            p1 = _calculate_path_between_points(route_x1, route_y1, bx, by, all_blocks, excluded_ids)
+            p2 = _calculate_path_between_points(bx, by, route_x2, route_y2, all_blocks, excluded_ids)
             if p2 and p1 and len(p2) > 0:
                 # Склеиваем без дублирования bend-точки
                 merged = p1 + p2[1:]
             else:
                 merged = p1 or p2
             merged = _dedupe_consecutive(merged)
-            return merged
+            # Добавляем "подлёт" к блоку: наконечник/начало вплотную к границе блока
+            if (route_x1, route_y1) != (x1, y1):
+                merged = [(x1, y1)] + merged
+            if (route_x2, route_y2) != (x2, y2):
+                merged = merged + [(x2, y2)]
+            return _dedupe_consecutive(merged)
         
-        return _calculate_path_between_points(x1, y1, x2, y2, all_blocks, excluded_ids)
+        core = _calculate_path_between_points(route_x1, route_y1, route_x2, route_y2, all_blocks, excluded_ids)
+        # Добавляем "подлёт" к блоку: наконечник/начало вплотную к границе блока
+        if (route_x1, route_y1) != (x1, y1):
+            core = [(x1, y1)] + core
+        if (route_x2, route_y2) != (x2, y2):
+            core = core + [(x2, y2)]
+        return _dedupe_consecutive(core)
     
     def _line_intersects_block(self, x1, y1, x2, y2, block):
         """
@@ -618,8 +656,8 @@ class Arrow:
         Returns:
             bool: True если линия пересекает внутреннюю область блока
         """
-        # Границы блока + небольшой допуск, чтобы учитывать касание границы
-        eps = 0.5
+        # Границы блока + допуск (зазор), чтобы стрелка не проходила вплотную к блоку
+        eps = 6.0
         block_left = block.x - block.width / 2 - eps
         block_right = block.x + block.width / 2 + eps
         block_top = block.y - block.height / 2 - eps
@@ -728,8 +766,8 @@ class Arrow:
         Returns:
             list: Список точек [(x1, y1), (x2, y2), ...] для обхода блока
         """
-        # Границы блока с небольшим отступом
-        padding = 5
+        # Границы блока с отступом (зазор), чтобы маршрут не "липовал" к блоку
+        padding = 20
         block_left = block.x - block.width / 2 - padding
         block_right = block.x + block.width / 2 + padding
         block_top = block.y - block.height / 2 - padding
