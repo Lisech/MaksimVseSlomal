@@ -11,7 +11,7 @@ import sys
 import json
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 from models import Block, Arrow, LayerManager
 
 class IDEF0App:
@@ -431,6 +431,7 @@ class IDEF0App:
             ("Открыть", "FolderOpen", (20,20)),
             ("Сохранить", "Save", (20,20)),
             ("Сохранить как", "Download", (20,20)),
+            ("Экспорт PNG", "Image", (20,20)),
             ("Импорт", "Upload", (20,20)),
         ]
 
@@ -448,6 +449,8 @@ class IDEF0App:
                 btn.configure(command=self.save_file)
             elif text == "Сохранить как":
                 btn.configure(command=self.save_file_as)
+            elif text == "Экспорт PNG":
+                btn.configure(command=self.export_to_png)
             elif text == "Импорт":
                 btn.configure(command=self.import_layers)
 
@@ -1029,8 +1032,8 @@ class IDEF0App:
     
     def create_arrow_buttons(self, block_data):
         """Создает кнопки внутри блока для создания стрелок"""
-        # Удаляем старые кнопки
-        self.delete_arrow_buttons(block_data)
+        # Кнопки создания стрелок отключены
+        return
         
         model = block_data["model"]
         button_size = 10  # Размер кнопки
@@ -1260,7 +1263,9 @@ class IDEF0App:
 
     def start_resize(self, event, block_data, handle_type):
         """Начало изменения размера"""
+        print(f"start_resize вызван: режим={self.current_mode}, блок={block_data['id']}, handle={handle_type}")
         if self.current_mode == "select":
+            print(f"Начинаем изменение размера блока {block_data['id']}")
             self.resizing_block = block_data
             model = block_data["model"]
             
@@ -1302,16 +1307,16 @@ class IDEF0App:
                 "start_top": top,
                 "start_bottom": bottom
             }
-            return "break"
+        return "break"  # Всегда возвращаем "break", чтобы предотвратить распространение события
 
     def do_resize(self, event, block_data, handle_type):
         """Изменение размера блока (пока только превью)"""
         if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
             resize_data = block_data["resize_data"]
             
-            # Текущая позиция мыши - это новый угол блока
-            new_x = event.x
-            new_y = event.y
+            # Текущая позиция мыши - это новый угол блока (преобразуем в координаты холста)
+            new_x = self.canvas.canvasx(event.x)
+            new_y = self.canvas.canvasy(event.y)
             
             # Фиксированный угол (противоположный)
             fixed_x = resize_data["fixed_x"]
@@ -1359,9 +1364,9 @@ class IDEF0App:
             model = block_data["model"]
             handle_type = resize_data["handle_type"]
             
-            # Текущая позиция мыши - это новый угол блока
-            new_x = event.x
-            new_y = event.y
+            # Текущая позиция мыши - это новый угол блока (преобразуем в координаты холста)
+            new_x = self.canvas.canvasx(event.x)
+            new_y = self.canvas.canvasy(event.y)
             
             # Фиксированный угол (противоположный)
             fixed_x = resize_data["fixed_x"]
@@ -1484,6 +1489,14 @@ class IDEF0App:
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
+            # Проверяем, не кликнули ли по маркеру изменения размера
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "resize_handle" in tags:
+                    # Клик по маркеру изменения размера - пропускаем обработку
+                    return None
+            
             # Не начинаем перетаскивание в режиме рисования стрелок
             if self.current_mode == "draw_arrow":
                 return None
@@ -1559,6 +1572,14 @@ class IDEF0App:
         
         def arrow_click(event):
             """Обработчик клика по блоку в режиме рисования стрелок"""
+            # Проверяем, не кликнули ли по маркеру изменения размера
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "resize_handle" in tags:
+                    # Клик по маркеру изменения размера - пропускаем обработку
+                    return None
+            
             # В режиме рисования стрелок — пропускаем дальше (обработает on_canvas_click)
             if self.current_mode == "draw_arrow":
                 return None
@@ -3324,36 +3345,73 @@ class IDEF0App:
             if block_data["id"] == exclude_block_id:
                 continue
             
-            block = block_data["model"]
-            
-            # Показываем точки на всех сторонах
-            for side in ["left", "right", "top", "bottom"]:
-                points = block.get_attachment_points(side)
-                for point_index, (px, py) in enumerate(points):
-                    if icon:
-                        # Используем изображение
-                        point_id = self.canvas.create_image(
-                            px, py,
-                            image=icon,
-                            tags=("attachment_point", block_data["id"], side, str(point_index))
-                        )
-                    else:
-                        # Используем круг как запасной вариант
-                        # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
-                        size = self.attachment_point_size / 2
-                        point_id = self.canvas.create_oval(
-                            px - size, py - size,
-                            px + size, py + size,
-                            fill=Colors.HANDLE_FILL,
-                            outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
-                            width=3 if self.is_dark_theme else 2,  # Более толстая обводка в темной теме
-                            tags=("attachment_point", block_data["id"], side, str(point_index))
-                        )
-                    
-                    self.attachment_points.append(point_id)
+            # Получаем актуальные визуальные координаты блока с canvas
+            try:
+                rect_id = block_data.get("rect_id")
+                if not rect_id:
+                    continue
+                
+                coords = self.canvas.coords(rect_id)
+                if len(coords) < 4:
+                    continue
+                
+                # Вычисляем визуальные координаты блока
+                visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                visual_center_x = (visual_x1 + visual_x2) / 2
+                visual_center_y = (visual_y1 + visual_y2) / 2
+                visual_width = visual_x2 - visual_x1
+                visual_height = visual_y2 - visual_y1
+                
+                # Показываем точки на всех сторонах на границе блока
+                for side in ["left", "right", "top", "bottom"]:
+                    # Вычисляем координаты точек прикрепления на границе блока
+                    for point_index in range(3):
+                        if side == "left" or side == "right":
+                            # Вертикальная сторона - 3 точки по вертикали
+                            offset = (point_index - 1) * (visual_height / 3)  # -height/3, 0, height/3
+                            if side == "left":
+                                px = visual_x1  # Левая граница
+                                py = visual_center_y + offset
+                            else:  # right
+                                px = visual_x2  # Правая граница
+                                py = visual_center_y + offset
+                        else:  # top or bottom
+                            # Горизонтальная сторона - 3 точки по горизонтали
+                            offset = (point_index - 1) * (visual_width / 3)  # -width/3, 0, width/3
+                            if side == "top":
+                                px = visual_center_x + offset
+                                py = visual_y1  # Верхняя граница
+                            else:  # bottom
+                                px = visual_center_x + offset
+                                py = visual_y2  # Нижняя граница
+                        
+                        if icon:
+                            # Используем изображение
+                            point_id = self.canvas.create_image(
+                                px, py,
+                                image=icon,
+                                tags=("attachment_point", block_data["id"], side, str(point_index))
+                            )
+                        else:
+                            # Используем круг как запасной вариант
+                            # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
+                            size = self.attachment_point_size / 2
+                            point_id = self.canvas.create_oval(
+                                px - size, py - size,
+                                px + size, py + size,
+                                fill=Colors.HANDLE_FILL,
+                                outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
+                                width=3 if self.is_dark_theme else 2,  # Более толстая обводка в темной теме
+                                tags=("attachment_point", block_data["id"], side, str(point_index))
+                            )
+                        
+                        self.attachment_points.append(point_id)
+            except (tk.TclError, ValueError, IndexError) as e:
+                print(f"Ошибка при создании точек прикрепления для блока {block_data.get('id', 'unknown')}: {e}")
+                continue
     
     def update_attachment_points(self):
-        """Обновляет позиции всех видимых точек прикрепления"""
+        """Обновляет позиции всех видимых точек прикрепления на основе визуальных координат блоков"""
         if not hasattr(self, "attachment_points") or not self.attachment_points:
             return
         
@@ -3377,18 +3435,51 @@ class IDEF0App:
             except (tk.TclError, ValueError, IndexError):
                 continue
         
-        # Обновляем координаты каждой точки
+        # Обновляем координаты каждой точки на основе визуальных координат блока
         for point_id, (block_id, side, point_index, is_image) in attachment_data.items():
             # Находим блок
             block_data = next((b for b in self.blocks if b["id"] == block_id), None)
             if not block_data:
                 continue
             
-            block = block_data["model"]
-            points = block.get_attachment_points(side)
-            
-            if point_index < len(points):
-                px, py = points[point_index]
+            # Получаем актуальные визуальные координаты блока с canvas
+            try:
+                rect_id = block_data.get("rect_id")
+                if not rect_id:
+                    continue
+                
+                coords = self.canvas.coords(rect_id)
+                if len(coords) < 4:
+                    continue
+                
+                # Вычисляем визуальные координаты блока
+                visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                visual_center_x = (visual_x1 + visual_x2) / 2
+                visual_center_y = (visual_y1 + visual_y2) / 2
+                visual_width = visual_x2 - visual_x1
+                visual_height = visual_y2 - visual_y1
+                
+                # Вычисляем координаты точки прикрепления на границе блока
+                if side == "left" or side == "right":
+                    # Вертикальная сторона - 3 точки по вертикали
+                    offset = (point_index - 1) * (visual_height / 3)  # -height/3, 0, height/3
+                    if side == "left":
+                        px = visual_x1  # Левая граница
+                        py = visual_center_y + offset
+                    else:  # right
+                        px = visual_x2  # Правая граница
+                        py = visual_center_y + offset
+                else:  # top or bottom
+                    # Горизонтальная сторона - 3 точки по горизонтали
+                    offset = (point_index - 1) * (visual_width / 3)  # -width/3, 0, width/3
+                    if side == "top":
+                        px = visual_center_x + offset
+                        py = visual_y1  # Верхняя граница
+                    else:  # bottom
+                        px = visual_center_x + offset
+                        py = visual_y2  # Нижняя граница
+                
+                # Обновляем позицию точки
                 try:
                     if is_image:
                         self.canvas.coords(point_id, px, py)
@@ -3398,6 +3489,9 @@ class IDEF0App:
                         self.canvas.coords(point_id, px - size, py - size, px + size, py + size)
                 except tk.TclError:
                     pass
+            except (tk.TclError, ValueError, IndexError) as e:
+                print(f"Ошибка при обновлении точки прикрепления: {e}")
+                continue
     
     def hide_attachment_points(self):
         """Скрывает все точки прикрепления"""
@@ -6249,6 +6343,91 @@ class IDEF0App:
             messagebox.showinfo("Сохранение", "Файл успешно сохранен!")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+    
+    def export_to_png(self):
+        """Экспортирует текущий canvas в PNG файл"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+        
+        try:
+            # Получаем scrollregion для определения полного размера canvas
+            scrollregion = self.canvas.cget("scrollregion")
+            if not scrollregion:
+                messagebox.showerror("Ошибка", "Не удалось определить размеры canvas для экспорта")
+                return
+            
+            srl = scrollregion.split()
+            if len(srl) < 4:
+                messagebox.showerror("Ошибка", "Не удалось определить размеры canvas для экспорта")
+                return
+            
+            min_x, min_y, max_x, max_y = float(srl[0]), float(srl[1]), float(srl[2]), float(srl[3])
+            canvas_width = int(max_x - min_x)
+            canvas_height = int(max_y - min_y)
+            
+            if canvas_width <= 0 or canvas_height <= 0:
+                messagebox.showerror("Ошибка", "Неверные размеры canvas для экспорта")
+                return
+            
+            # Используем временный EPS файл (PostScript)
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            ps_file = os.path.join(temp_dir, f"canvas_export_{os.getpid()}.eps")
+            
+            try:
+                # Экспортируем canvas в EPS (PostScript)
+                self.canvas.postscript(
+                    file=ps_file,
+                    colormode='color',
+                    width=canvas_width,
+                    height=canvas_height,
+                    x=min_x,
+                    y=min_y,
+                    pagewidth=canvas_width,
+                    pageheight=canvas_height
+                )
+                
+                # Пытаемся открыть EPS через PIL
+                # PIL может не поддерживать EPS напрямую, поэтому используем альтернативный метод
+                try:
+                    # Пробуем открыть как EPS
+                    img = Image.open(ps_file)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    img.save(file_path, 'PNG')
+                except Exception as e1:
+                    # Если PIL не может открыть EPS, используем альтернативный метод
+                    print(f"PIL не может открыть EPS напрямую: {e1}")
+                    # Используем метод через ImageGrab для захвата видимой области
+                    # Получаем координаты canvas на экране
+                    self.canvas.update_idletasks()
+                    x = self.canvas.winfo_rootx()
+                    y = self.canvas.winfo_rooty()
+                    width = self.canvas.winfo_width()
+                    height = self.canvas.winfo_height()
+                    
+                    # Захватываем видимую область
+                    img = ImageGrab.grab(bbox=(x, y, x + width, y + height))
+                    img.save(file_path, 'PNG')
+                    print(f"Экспортировано через ImageGrab: {width}x{height} (только видимая область)")
+                
+                messagebox.showinfo("Экспорт", "Изображение успешно экспортировано в PNG!")
+            finally:
+                # Удаляем временный файл
+                try:
+                    if os.path.exists(ps_file):
+                        os.remove(ps_file)
+                except:
+                    pass
+                    
+        except Exception as e:
+            import traceback
+            error_msg = f"Не удалось экспортировать изображение:\n{str(e)}\n\n{traceback.format_exc()}"
+            messagebox.showerror("Ошибка", error_msg)
     
     def open_file(self):
         """Открывает файл"""
