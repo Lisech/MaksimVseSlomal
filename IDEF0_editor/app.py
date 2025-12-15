@@ -4984,7 +4984,7 @@ class IDEF0App:
                 arrow.locked_path = None
         
         if not routing_path:
-            routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
+        routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
         # Сохраняем путь для позиционирования ручки изгиба и прочих UI-элементов
         arrow_data["routing_path"] = routing_path
         
