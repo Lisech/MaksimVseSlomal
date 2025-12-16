@@ -9,136 +9,171 @@ import os
 import math
 import sys
 import json
+from typing import Optional, List, Dict, Any, Tuple
+from dataclasses import dataclass, field
+from PIL import Image, ImageTk, ImageGrab
+
+# Локальные импорты
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
-from PIL import Image, ImageTk, ImageGrab
 from models import Block, Arrow, LayerManager
 
+
+@dataclass
+class AppState:
+    """Класс для хранения состояния приложения"""
+    is_dark_theme: bool = False
+    current_mode: str = "select"
+    current_file_path: Optional[str] = None
+    zoom_scale: float = 1.0
+    next_block_id: int = 1
+    next_arrow_id: int = 1
+    clipboard: Any = None
+    clipboard_type: Optional[str] = None
+
+
 class IDEF0App:
+    """Основной класс приложения IDEF0 Editor"""
+    
     def __init__(self):
         self.root = tk.Tk()
-        # Текущая тема приложения (False = светлая, True = тёмная)
-        self.is_dark_theme = False
-        # Убедимся, что при старте используются цвета светлой темы
+        
+        # Инициализация состояний
+        self.state = AppState()
+        
+        # Инициализация цветовой схемы
         Colors.use_light()
+        
         # Кэши и привязки для иконок
-        self._icons = {}
-        self._icon_bindings = []
-        # Кнопки действий для выбранного блока (на холсте)
-        self.block_action_buttons = []
-        # Стеки для undo/redo (инициализируем до setup_ui)
-        self.undo_stack = []  # стек для отмены действий
-        self.redo_stack = []  # стек для повтора действий
-        self.max_history_size = 50  # максимальный размер истории
-        # Буфер обмена для копирования/вставки
-        self.clipboard = None  # хранит скопированный элемент (блок или стрелка)
-        self.clipboard_type = None  # "block" или "arrow"
+        self._icons: Dict[str, ImageTk.PhotoImage] = {}
+        self._icon_bindings: List[Dict[str, Any]] = []
+        
+        # Списки элементов
+        self.blocks: List[Dict[str, Any]] = []
+        self.arrows: List[Dict[str, Any]] = []
+        
+        # Управление выделением
+        self.selected_block: Optional[Dict[str, Any]] = None
+        self.selected_arrow: Optional[Dict[str, Any]] = None
+        
+        # Состояния перетаскивания
+        self.dragging_block: Optional[Dict[str, Any]] = None
+        self.drag_from_sidebar: bool = False
+        self.drag_preview: Optional[int] = None
+        
+        # Состояние изменения размера
+        self.resizing_block: Optional[Dict[str, Any]] = None
+        self.resize_handle_size: int = 12
+        self.resize_preview: Optional[int] = None
+        
+        # Состояние рисования стрелок
+        self.arrow_drawing_mode: bool = False
+        self.arrow_start_block: Optional[Dict[str, Any]] = None
+        self.arrow_start_x: Optional[float] = None
+        self.arrow_start_y: Optional[float] = None
+        self.arrow_preview_line: Optional[int] = None
+        self.arrow_drawing: bool = False
+        
+        # Состояние панорамирования
+        self.is_panning: bool = False
+        self.pan_start_x: int = 0
+        self.pan_start_y: int = 0
+        
+        # Кнопки действий
+        self.block_action_buttons: List[Dict[str, Any]] = []
+        self.arrow_action_buttons: List[Dict[str, Any]] = []
+        self.arrow_drag_handles: Dict[str, Dict[str, int]] = {}
+        self.dragging_arrow_end: Optional[str] = None
+        
+        # Точки прикрепления
+        self.attachment_points: List[int] = []
+        self.attachment_point_size: int = 12
+        self.attachment_snap_distance: int = 20
+        
+        # История действий
+        self.undo_stack: List[Dict[str, Any]] = []
+        self.redo_stack: List[Dict[str, Any]] = []
+        self.max_history_size: int = 50
+        
+        # Менеджер слоев
+        self.layer_manager = LayerManager()
+        self.current_right_panel: str = "properties"
+        self.layers_panel_visible: bool = False
+        
+        # Инициализация UI
         self.setup_window()
-        # Инициализируем layer_manager до setup_ui, так как он используется в setup_main_layout
-        self.layer_manager = LayerManager()  # Менеджер слоев для иерархии
-        self.current_right_panel = "properties"  # или "layers"
-        self.layers_panel_visible = False
         self.setup_ui()
-        self.blocks = []
-        self.arrows = []  # список стрелок
-        self.next_block_id = 1
-        self.next_arrow_id = 1  # счетчик для ID стрелок
-        self.current_file_path = None  # путь к текущему файлу
-        self.is_panning = False  # флаг режима панорамирования
-        self.pan_start_x = 0
-        self.pan_start_y = 0
-        self.selected_block = None  # текущий выбранный блок
-        self.selected_arrow = None  # текущая выбранная стрелка
-        self.dragging_block = None  # блок, который сейчас перетаскивается
-        self.current_mode = "select"  # режим работы: "select" или "pan"
-        self.drag_from_sidebar = False  # флаг перетаскивания из панели
-        self.drag_preview = None  # превью перетаскиваемого блока
-        self.resizing_block = None  # блок, который сейчас изменяется
-        self.resize_handle_size = 12  # размер маркеров изменения размера (в 1.5 раза больше, чем было)
-        self.resize_preview = None  # превью растягивания
-        self.block_action_buttons = []
-        self.arrow_action_buttons = []
-        self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
-        self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
-        self.arrow_drawing_mode = False  # режим рисования стрелок
-        self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
-        self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
-        self.arrow_start_y = None  # начальная координата Y (если стрелка начинается не от блока)
-        self.arrow_preview_line = None  # превью линии стрелки
-        self.arrow_drawing = False  # флаг активного рисования стрелки
-        self.zoom_scale = 1.0  # текущий масштаб
-        self.attachment_points = []  # визуальные элементы точек прикрепления
-        self.attachment_point_size = 12  # размер точки прикрепления
-        self.attachment_snap_distance = 20  # расстояние для прикрепления
+        
+        # Установка горячих клавиш
+        self.setup_hotkeys()
     
-    def setup_window(self):
+    def setup_window(self) -> None:
         """Настройка главного окна"""
         self.root.title("IDEF0 Editor — Макет")
         self.root.geometry("1200x700")
         self.root.configure(bg=Colors.BACKGROUND)
         self.root.minsize(1200, 800)
         
+        # Центрирование окна
+        self.center_window()
     
-    def setup_ui(self):
+    def center_window(self) -> None:
+        """Центрирует окно на экране"""
+        self.root.update_idletasks()
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.root.winfo_screenheight() // 2) - (height // 2)
+        self.root.geometry(f'{width}x{height}+{x}+{y}')
+    
+    def setup_ui(self) -> None:
         """Создание интерфейса - точная копия HTML макета"""
         # Header
         self.setup_header()
-
+        
         # Main layout
         self.setup_main_layout()
         
         # Инициализируем состояние кнопок undo/redo
         self.update_undo_redo_buttons()
-
-    def format_block_text(self, text, max_width, max_chars=None):
+        
+        # Обновляем информацию в футере
+        self.update_footer_info()
+    
+    def format_block_text(self, text: str, max_width: int, max_chars: Optional[int] = None) -> str:
         """
         Форматирует текст блока с ограничением по символам и автопереносом до края блока.
-        Текст автоматически переносится при достижении края блока (с учетом отступов).
         
         Args:
             text: Исходный текст
-            max_width: Максимальная ширина блока в пикселях (для автопереноса)
+            max_width: Максимальная ширина блока в пикселях
             max_chars: Максимальное количество символов (если None, вычисляется автоматически)
         
         Returns:
-            Текст с ограничением по символам (перенос выполняется автоматически через width)
+            Текст с ограничением по символам и автопереносом
         """
         if not text:
             return ""
         
         # Параметры шрифта для расчета
         font_size = 10
-        padding = 10  # Отступы по 5px с каждой стороны
+        padding = 10
         
         # Вычисляем доступную ширину для текста
         available_width = max_width - padding
         
         # Если max_chars не указан, вычисляем его на основе ширины блока
         if max_chars is None:
-            # Для шрифта Segoe UI 10pt средняя ширина символа примерно 6-7px
-            # Используем более консервативную оценку 7px на символ для учета широких символов
             chars_per_line = max(1, int(available_width / 7))
-            
-            # Учитываем возможность многострочного текста
-            # Высота строки примерно font_size * 1.4-1.5
             line_height = font_size * 1.5
-            # Максимальная высота блока обычно позволяет 2-3 строки для стандартного блока
-            # Но мы ограничимся разумным максимумом
             max_lines = max(1, min(5, int((max_width * 0.6) / line_height)))
-            
-            # Общее количество символов = символы на строку * количество строк
             max_chars = chars_per_line * max_lines
-            
-            # Ограничения: минимум 15 символов, максимум 80 (как в полях ввода)
             max_chars = max(15, min(80, max_chars))
         
         # Ограничение по символам с добавлением многоточия при обрезке
         if len(text) > max_chars:
-            text = text[:max_chars - 3] + "..."  # Оставляем место для "..."
+            text = text[:max_chars - 3] + "..."
         
-        # Возвращаем текст - tkinter Canvas автоматически выполнит перенос
-        # при указании параметра width в create_text (width = available_width)
-        # Перенос происходит до пересечения с краем блока благодаря параметру width
         return text
 
     def setup_hotkeys(self):
