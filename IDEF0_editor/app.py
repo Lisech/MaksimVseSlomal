@@ -36,110 +36,257 @@ class IDEF0App:
     """Основной класс приложения IDEF0 Editor"""
     
     def __init__(self):
+        """Инициализация приложения IDEF0 Editor"""
         self.root = tk.Tk()
         
-        # Инициализация состояний
+        # Основные состояния приложения
         self.state = AppState()
         
-        # Инициализация цветовой схемы
+        # Инициализация системных компонентов
+        self._initialize_system_components()
+        
+        # Инициализация UI
+        self._initialize_ui()
+        
+        # Установка горячих клавиш
+        self.setup_hotkeys()
+        
+        # Финальная настройка окна
+        self._finalize_window_setup()
+    
+    def _initialize_system_components(self) -> None:
+        """Инициализация системных компонентов приложения"""
+        # Цветовая схема
         Colors.use_light()
         
         # Кэши и привязки для иконок
         self._icons: Dict[str, ImageTk.PhotoImage] = {}
         self._icon_bindings: List[Dict[str, Any]] = []
         
+        # Управление данными
+        self._initialize_data_structures()
+        
+        # Управление состояниями
+        self._initialize_state_management()
+        
+        # Управление UI состояниями
+        self._initialize_ui_states()
+    
+    def _initialize_data_structures(self) -> None:
+        """Инициализация структур данных для хранения элементов"""
         # Списки элементов
-        self.blocks: List[Dict[str, Any]] = []
-        self.arrows: List[Dict[str, Any]] = []
+        self.blocks: List[BlockData] = []
+        self.arrows: List[ArrowData] = []
+        
+        # История действий
+        self.undo_stack: List[Dict[str, Any]] = []
+        self.redo_stack: List[Dict[str, Any]] = []
+        self.max_history_size = 50
+        
+        # Менеджер слоев
+        self.layer_manager = LayerManager()
         
         # Управление выделением
-        self.selected_block: Optional[Dict[str, Any]] = None
-        self.selected_arrow: Optional[Dict[str, Any]] = None
-        
+        self.selected_block: Optional[BlockData] = None
+        self.selected_arrow: Optional[ArrowData] = None
+    
+    def _initialize_state_management(self) -> None:
+        """Инициализация управления состояниями взаимодействия"""
         # Состояния перетаскивания
-        self.dragging_block: Optional[Dict[str, Any]] = None
-        self.drag_from_sidebar: bool = False
+        self.dragging_block: Optional[BlockData] = None
+        self.drag_from_sidebar = False
         self.drag_preview: Optional[int] = None
         
         # Состояние изменения размера
-        self.resizing_block: Optional[Dict[str, Any]] = None
-        self.resize_handle_size: int = 12
+        self.resizing_block: Optional[BlockData] = None
+        self.resize_handle_size = 12
         self.resize_preview: Optional[int] = None
         
         # Состояние рисования стрелок
-        self.arrow_drawing_mode: bool = False
-        self.arrow_start_block: Optional[Dict[str, Any]] = None
+        self.arrow_drawing_mode = False
+        self.arrow_start_block: Optional[BlockData] = None
         self.arrow_start_x: Optional[float] = None
         self.arrow_start_y: Optional[float] = None
         self.arrow_preview_line: Optional[int] = None
-        self.arrow_drawing: bool = False
+        self.arrow_drawing = False
         
         # Состояние панорамирования
-        self.is_panning: bool = False
-        self.pan_start_x: int = 0
-        self.pan_start_y: int = 0
-        
+        self.is_panning = False
+        self.pan_start_x = 0
+        self.pan_start_y = 0
+    
+    def _initialize_ui_states(self) -> None:
+        """Инициализация состояний UI компонентов"""
         # Кнопки действий
-        self.block_action_buttons: List[Dict[str, Any]] = []
-        self.arrow_action_buttons: List[Dict[str, Any]] = []
+        self.block_action_buttons: List[ActionButton] = []
+        self.arrow_action_buttons: List[ActionButton] = []
         self.arrow_drag_handles: Dict[str, Dict[str, int]] = {}
         self.dragging_arrow_end: Optional[str] = None
         
         # Точки прикрепления
         self.attachment_points: List[int] = []
-        self.attachment_point_size: int = 12
-        self.attachment_snap_distance: int = 20
+        self.attachment_point_size = 12
+        self.attachment_snap_distance = 20
         
-        # История действий
-        self.undo_stack: List[Dict[str, Any]] = []
-        self.redo_stack: List[Dict[str, Any]] = []
-        self.max_history_size: int = 50
-        
-        # Менеджер слоев
-        self.layer_manager = LayerManager()
-        self.current_right_panel: str = "properties"
-        self.layers_panel_visible: bool = False
-        
-        # Инициализация UI
+        # Состояния панелей
+        self.current_right_panel = "properties"
+        self.layers_panel_visible = False
+    
+    def _initialize_ui(self) -> None:
+        """Инициализация пользовательского интерфейса"""
+        # Настройка основного окна
         self.setup_window()
-        self.setup_ui()
         
-        # Установка горячих клавиш
-        self.setup_hotkeys()
+        # Создание интерфейса
+        self.setup_ui()
+    
+    def _finalize_window_setup(self) -> None:
+        """Финальная настройка окна после инициализации"""
+        # Обновление состояния UI
+        self.update_undo_redo_buttons()
+        self.update_footer_info()
+        
+        # Установка обработчиков событий
+        self._setup_event_handlers()
+        
+        # Проверка готовности
+        self._verify_initialization()
+    
+    def _setup_event_handlers(self) -> None:
+        """Настройка обработчиков событий окна"""
+        # Обработчик закрытия окна
+        self.root.protocol("WM_DELETE_WINDOW", self._on_window_close)
+        
+        # Обработчик изменения размера окна
+        self.root.bind("<Configure>", self._on_window_resize)
+    
+    def _verify_initialization(self) -> None:
+        """Проверка успешной инициализации компонентов"""
+        required_attributes = [
+            'root', 'blocks', 'arrows', 'layer_manager',
+            'canvas', 'properties_panel'
+        ]
+        
+        for attr in required_attributes:
+            if not hasattr(self, attr):
+                print(f"Предупреждение: атрибут '{attr}' не инициализирован")
+    
+    def _on_window_close(self) -> None:
+        """Обработчик закрытия окна"""
+        # Проверяем несохраненные изменения
+        if self._has_unsaved_changes():
+            if not self._confirm_close_without_save():
+                return
+        
+        # Закрываем окно
+        self.root.destroy()
+    
+    def _on_window_resize(self, event: tk.Event) -> None:
+        """Обработчик изменения размера окна"""
+        if event.widget == self.root:
+            # Обновляем UI при изменении размера
+            self._handle_window_resize()
     
     def setup_window(self) -> None:
-        """Настройка главного окна"""
-        self.root.title("IDEF0 Editor — Макет")
-        self.root.geometry("1200x700")
-        self.root.configure(bg=Colors.BACKGROUND)
-        self.root.minsize(1200, 800)
+        """Настройка главного окна приложения"""
+        # Основные параметры окна
+        window_config = {
+            "title": "IDEF0 Editor — Макет",
+            "geometry": "1200x700",
+            "bg": Colors.BACKGROUND,
+            "minsize": (1200, 800)
+        }
+        
+        self.root.title(window_config["title"])
+        self.root.geometry(window_config["geometry"])
+        self.root.configure(bg=window_config["bg"])
+        self.root.minsize(*window_config["minsize"])
+        
+        # Дополнительные настройки окна
+        self._apply_window_settings()
         
         # Центрирование окна
         self.center_window()
     
+    def _apply_window_settings(self) -> None:
+        """Применение дополнительных настроек окна"""
+        # Отключаем изменение размера по умолчанию (можно включить позже)
+        # self.root.resizable(True, True)
+        
+        # Устанавливаем иконку окна (если есть)
+        self._set_window_icon()
+        
+        # Настраиваем поведение при фокусе
+        self.root.attributes('-topmost', False)
+    
+    def _set_window_icon(self) -> None:
+        """Устанавливает иконку окна приложения"""
+        try:
+            # Путь к иконке (замените на актуальный путь)
+            icon_path = os.path.join(os.path.dirname(__file__), "img", "app_icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except (tk.TclError, FileNotFoundError):
+            # Иконка не найдена - используем стандартную
+            pass
+    
     def center_window(self) -> None:
         """Центрирует окно на экране"""
+        # Обновляем информацию о размерах
         self.root.update_idletasks()
-        width = self.root.winfo_width()
-        height = self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() // 2) - (width // 2)
-        y = (self.root.winfo_screenheight() // 2) - (height // 2)
-        self.root.geometry(f'{width}x{height}+{x}+{y}')
+        
+        # Получаем размеры окна и экрана
+        window_width = self.root.winfo_width()
+        window_height = self.root.winfo_height()
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Вычисляем координаты для центрирования
+        x_position = (screen_width - window_width) // 2
+        y_position = (screen_height - window_height) // 2
+        
+        # Устанавливаем новую позицию
+        self.root.geometry(f'{window_width}x{window_height}+{x_position}+{y_position}')
     
     def setup_ui(self) -> None:
-        """Создание интерфейса - точная копия HTML макета"""
-        # Header
-        self.setup_header()
-        
-        # Main layout
-        self.setup_main_layout()
-        
-        # Инициализируем состояние кнопок undo/redo
-        self.update_undo_redo_buttons()
-        
-        # Обновляем информацию в футере
-        self.update_footer_info()
+        """Создание пользовательского интерфейса"""
+        try:
+            # Верхняя панель
+            self.setup_header()
+            
+            # Основная layout-сетка
+            self.setup_main_layout()
+            
+            # Инициализация дополнительных компонентов
+            self._initialize_additional_components()
+            
+        except Exception as e:
+            print(f"Ошибка при создании интерфейса: {e}")
+            raise
     
+    def _initialize_additional_components(self) -> None:
+        """Инициализация дополнительных компонентов UI"""
+        # Проверяем наличие обязательных компонентов
+        if not hasattr(self, 'canvas'):
+            raise AttributeError("Canvas не инициализирован")
+        
+        if not hasattr(self, 'properties_panel'):
+            raise AttributeError("Properties panel не инициализирован")
+        
+        # Настройка начального состояния
+        self._setup_initial_state()
+    
+    def _setup_initial_state(self) -> None:
+        """Настройка начального состояния интерфейса"""
+        # Устанавливаем режим по умолчанию
+        self.enable_select_mode()
+        
+        # Сбрасываем выделение
+        self.selected_block = None
+        self.selected_arrow = None
+        
+        # Обновляем панель свойств
+        self.properties_panel.update_properties(None)
     def format_block_text(self, text: str, max_width: int, max_chars: Optional[int] = None) -> str:
         """
         Форматирует текст блока с ограничением по символам и автопереносом до края блока.
