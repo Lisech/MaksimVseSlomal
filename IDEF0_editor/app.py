@@ -38,7 +38,7 @@ class IDEF0App:
         self.layer_manager = LayerManager()  # Менеджер слоев для иерархии
         self.current_right_panel = "properties"  # или "layers"
         self.layers_panel_visible = False
-        self.setup_ui()
+        # Инициализируем все переменные до setup_ui, чтобы они были доступны при создании UI
         self.blocks = []
         self.arrows = []  # список стрелок
         self.next_block_id = 1
@@ -56,7 +56,6 @@ class IDEF0App:
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 12  # размер маркеров изменения размера (в 1.5 раза больше, чем было)
         self.resize_preview = None  # превью растягивания
-        self.block_action_buttons = []
         self.arrow_action_buttons = []
         self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
         self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
@@ -74,6 +73,8 @@ class IDEF0App:
         self.attachment_points = []  # визуальные элементы точек прикрепления
         self.attachment_point_size = 12  # размер точки прикрепления
         self.attachment_snap_distance = 20  # расстояние для прикрепления
+        # Теперь инициализируем UI после инициализации всех переменных
+        self.setup_ui()
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -4984,7 +4985,7 @@ class IDEF0App:
                 arrow.locked_path = None
         
         if not routing_path:
-        routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
+            routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
         # Сохраняем путь для позиционирования ручки изгиба и прочих UI-элементов
         arrow_data["routing_path"] = routing_path
         
