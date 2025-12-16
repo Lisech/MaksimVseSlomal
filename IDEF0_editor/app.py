@@ -6198,6 +6198,341 @@ class IDEF0App:
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         canvas.bind_all("<MouseWheel>", on_mousewheel)
     
+    def show_documentation(self):
+        """Отображает окно с документацией"""
+        # Создаем новое окно для документации
+        doc_window = tk.Toplevel(self.root)
+        doc_window.title("Документация - IDEF0 Editor")
+        doc_window.geometry("900x700")
+        doc_window.configure(bg=Colors.BACKGROUND)
+        doc_window.minsize(600, 400)
+        
+        # Делаем окно модальным (опционально, можно убрать)
+        doc_window.transient(self.root)
+        doc_window.grab_set()
+        
+        # Заголовок
+        header_frame = tk.Frame(doc_window, bg=Colors.SURFACE, height=50)
+        header_frame.pack(fill=tk.X)
+        header_frame.pack_propagate(False)
+        
+        title_label = tk.Label(
+            header_frame,
+            text="Документация IDEF0 Editor",
+            font=("Segoe UI", 14, "bold"),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT, padx=20, pady=15)
+        
+        # Кнопка закрытия
+        close_btn = tk.Button(
+            header_frame,
+            text="✕",
+            font=("Segoe UI", 16),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            bd=0,
+            padx=15,
+            pady=10,
+            activebackground=Colors.HOVER,
+            command=doc_window.destroy
+        )
+        close_btn.pack(side=tk.RIGHT, padx=10)
+        self.apply_hover_effect(close_btn)
+        
+        # Основной контент с прокруткой
+        content_frame = tk.Frame(doc_window, bg=Colors.BACKGROUND)
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+        
+        # Text виджет с прокруткой
+        text_frame = tk.Frame(content_frame, bg=Colors.SURFACE)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(text_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        text_widget = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            font=("Segoe UI", 10),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            relief="flat",
+            padx=20,
+            pady=20,
+            yscrollcommand=scrollbar.set,
+            state=tk.NORMAL
+        )
+        text_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=text_widget.yview)
+        
+        # Вставляем документацию
+        documentation_text = self.get_documentation_text()
+        text_widget.insert("1.0", documentation_text)
+        text_widget.config(state=tk.DISABLED)  # Делаем только для чтения
+        
+        # Настройка тегов для форматирования
+        text_widget.tag_configure("title", font=("Segoe UI", 16, "bold"), foreground=Colors.PRIMARY, spacing1=20, spacing3=10)
+        text_widget.tag_configure("heading", font=("Segoe UI", 12, "bold"), foreground=Colors.TEXT_PRIMARY, spacing1=15, spacing3=5)
+        text_widget.tag_configure("subheading", font=("Segoe UI", 11, "bold"), foreground=Colors.TEXT_PRIMARY, spacing1=10, spacing3=3)
+        text_widget.tag_configure("code", font=("Consolas", 9), background=Colors.BACKGROUND, foreground=Colors.TEXT_PRIMARY)
+        text_widget.tag_configure("em", font=("Segoe UI", 10, "italic"))
+        
+        # Применяем форматирование
+        self.apply_documentation_formatting(text_widget, documentation_text)
+        
+        # Фокус на окно
+        doc_window.focus_set()
+        
+        # Привязка клавиши Escape для закрытия
+        doc_window.bind("<Escape>", lambda e: doc_window.destroy())
+    
+    def get_documentation_text(self):
+        """Возвращает текст документации"""
+        return """IDEF0 EDITOR - ДОКУМЕНТАЦИЯ
+
+═══════════════════════════════════════════════════════════════
+
+📖 ОПИСАНИЕ
+
+IDEF0 Editor — это графический редактор для создания функциональных диаграмм по стандарту IDEF0. Приложение предоставляет интуитивный интерфейс для создания блоков, соединения их стрелками, работы с иерархической структурой диаграмм и управления свойствами элементов.
+
+═══════════════════════════════════════════════════════════════
+
+✨ ВОЗМОЖНОСТИ
+
+Основные функции:
+• Создание блоков - Добавление функциональных блоков на диаграмму
+• Управление стрелками - Создание и редактирование стрелок между блоками с автоматической маршрутизацией
+• Иерархическая структура - Работа с вложенными уровнями диаграмм
+• Панель свойств - Редактирование свойств блоков и стрелок
+• Управление слоями - Навигация по уровням иерархии диаграммы
+
+Дополнительные возможности:
+• Темы оформления - Светлая и темная тема
+• Масштабирование - Увеличение и уменьшение масштаба диаграммы
+• Панорамирование - Перемещение по холсту
+• Undo/Redo - Отмена и повтор действий (до 50 шагов)
+• Копирование/Вставка - Копирование блоков и стрелок
+• Сохранение/Загрузка - Работа с файлами проектов в формате JSON
+• Автоматическая маршрутизация - Умная прокладка стрелок с обходом блоков
+• Точки прикрепления - Прикрепление стрелок к блокам с точным позиционированием
+• Текст на стрелках - Добавление подписей к стрелкам
+
+═══════════════════════════════════════════════════════════════
+
+🎮 ИСПОЛЬЗОВАНИЕ
+
+Создание новой диаграммы:
+1. Запустите приложение
+2. Нажмите кнопку "Новый" в панели инструментов или используйте Ctrl+N
+
+Добавление блоков:
+1. Нажмите на иконку "Square" (квадрат) в боковой панели
+2. Кликните на холсте в месте, где хотите разместить блок
+3. Или перетащите блок из панели инструментов на холст
+
+Редактирование блоков:
+1. Выберите блок кликом мыши
+2. В правой панели свойств отредактируйте:
+   - Название
+   - Код (например, A0, A1, A2)
+   - Тип элемента
+   - Описание
+   - Позицию и размер
+   - Цвет заливки
+   - Толщину границы
+
+Создание стрелок:
+1. Выберите инструмент "Стрелка" или нажмите соответствующую кнопку
+2. Кликните на начальном блоке (или свободной точке)
+3. Перетащите до конечного блока (или свободной точки)
+4. Стрелка автоматически проложит маршрут с обходом блоков
+
+Редактирование стрелок:
+1. Выберите стрелку кликом
+2. В панели свойств можно изменить:
+   - Цвет стрелки
+   - Толщину линии
+   - Стиль линии (сплошная, пунктирная, точечная)
+   - Текст на стрелке
+
+Работа с иерархией:
+1. Двойной клик по блоку открывает его детализацию (следующий уровень)
+2. Кнопка "Выход" возвращает на уровень выше
+3. Панель слоев показывает текущий путь в иерархии
+
+Сохранение и загрузка:
+• Сохранение: Ctrl+S или кнопка "Сохранить"
+• Сохранить как: Ctrl+Shift+S или кнопка "Сохранить как"
+• Открытие: Ctrl+O или кнопка "Открыть"
+
+Файлы сохраняются в формате JSON.
+
+═══════════════════════════════════════════════════════════════
+
+⌨️ ГОРЯЧИЕ КЛАВИШИ
+
+Новый проект          Ctrl+N
+Открыть               Ctrl+O
+Сохранить             Ctrl+S
+Сохранить как         Ctrl+Shift+S
+Отменить              Ctrl+Z
+Повторить             Ctrl+Y
+Копировать            Ctrl+C
+Вставить              Ctrl+V
+Удалить               Delete
+Увеличить масштаб     Ctrl+Plus или Ctrl+Wheel Up
+Уменьшить масштаб     Ctrl+Minus или Ctrl+Wheel Down
+Сброс масштаба        Ctrl+0
+
+═══════════════════════════════════════════════════════════════
+
+💾 ФОРМАТ ФАЙЛОВ
+
+Проекты сохраняются в формате JSON со следующей структурой:
+
+{
+  "version": "1.0",
+  "blocks": [
+    {
+      "id": 1,
+      "name": "Название блока",
+      "code": "A0",
+      "element_type": "Процесс",
+      "description": "Описание",
+      "x": 150,
+      "y": 150,
+      "width": 150,
+      "height": 50,
+      "color": "#E3F2FD",
+      "border_width": 2,
+      "parent_id": null
+    }
+  ],
+  "arrows": [
+    {
+      "id": 1,
+      "from_block_id": 1,
+      "to_block_id": 2,
+      "from_side": "right",
+      "to_side": "left",
+      "color": "#000000",
+      "width": 2,
+      "style": "solid",
+      "text": ""
+    }
+  ]
+}
+
+═══════════════════════════════════════════════════════════════
+
+❗ РЕШЕНИЕ ПРОБЛЕМ
+
+Ошибка "No module named 'app'":
+• Убедитесь, что вы находитесь в директории IDEF0_editor
+• Запускайте через python main.py, а не через python -m main
+
+Ошибка импорта PIL/Pillow:
+• Установите: pip install Pillow
+
+Приложение не запускается (exe):
+• Пересоберите exe: python rebuild.py
+• Убедитесь, что все зависимости установлены перед сборкой
+• Проверьте, что папка img/ присутствует
+
+Ошибки при сборке exe:
+• Убедитесь, что PyInstaller установлен: pip install pyinstaller
+• Проверьте файл main.spec на корректность
+• Запустите сборку с подробным выводом: pyinstaller --log-level=DEBUG main.spec
+
+Стрелки не прокладываются корректно:
+• Убедитесь, что блоки не перекрываются слишком сильно
+• Попробуйте увеличить отступы между блоками
+• Используйте ручную настройку точек прикрепления
+
+Проблемы с сохранением/загрузкой:
+• Проверьте права доступа к папке
+• Убедитесь, что формат файла корректный (JSON)
+• Проверьте консоль на наличие ошибок
+
+═══════════════════════════════════════════════════════════════
+
+📦 ТРЕБОВАНИЯ
+
+Системные требования:
+• ОС: Windows 7/8/10/11, Linux, macOS
+• Python: 3.7 или выше
+• ОЗУ: Минимум 512 MB
+• Дисковое пространство: ~50 MB
+
+Зависимости Python:
+• tkinter - Входит в стандартную поставку Python (для GUI)
+• Pillow (PIL) - Для работы с изображениями иконок
+
+═══════════════════════════════════════════════════════════════
+
+🔨 СБОРКА EXE
+
+Автоматическая сборка:
+• Windows: rebuild.bat
+• Linux/Mac: python rebuild.py
+• Универсальный способ: python rebuild.py
+
+Ручная сборка:
+1. Установите PyInstaller: pip install pyinstaller
+2. Перейдите в директорию проекта: cd IDEF0_editor
+3. Соберите exe: pyinstaller main.spec
+4. Результат будет в папке dist\main.exe
+
+═══════════════════════════════════════════════════════════════
+
+📚 ТЕХНИЧЕСКАЯ ДОКУМЕНТАЦИЯ
+
+Подробная техническая документация находится в файле DOCUMENTATION.md (в папке проекта).
+
+Включает:
+• Архитектуру приложения
+• Описание API классов
+• Алгоритмы (маршрутизация, прикрепление и т.д.)
+• Формат данных
+• Руководство по расширению функциональности
+
+═══════════════════════════════════════════════════════════════
+
+📞 ПОДДЕРЖКА
+
+При возникновении проблем:
+1. Проверьте раздел "Решение проблем" выше
+2. Проверьте логи в консоли
+3. Создайте issue с описанием проблемы и версией Python/ОС
+
+═══════════════════════════════════════════════════════════════
+
+Версия: 3.6
+Последнее обновление: 16.12.25
+
+Нажмите Escape для закрытия окна документации.
+"""
+    
+    def apply_documentation_formatting(self, text_widget, text):
+        """Применяет форматирование к тексту документации"""
+        # Простое форматирование - можно расширить
+        content = text_widget.get("1.0", tk.END)
+        lines = content.split('\n')
+        
+        for i, line in enumerate(lines):
+            line_num = str(i + 1)
+            if line.startswith('═══════════════════════════════════════════════════════════════'):
+                text_widget.tag_add("code", f"{line_num}.0", f"{line_num}.end")
+            elif line and not line.startswith(' ') and len(line) > 0 and line[0].isupper() and i < len(lines) - 1:
+                if lines[i+1].startswith('═'):
+                    text_widget.tag_add("title", f"{line_num}.0", f"{line_num}.end")
+                elif not lines[i+1].startswith('═') and not lines[i+1].startswith('•') and not lines[i+1].startswith(' '):
+                    text_widget.tag_add("heading", f"{line_num}.0", f"{line_num}.end")
+    
     def run(self):
         """Запуск приложения"""
         # Устанавливаем фокус на canvas при запуске
