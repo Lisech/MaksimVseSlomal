@@ -11,7 +11,7 @@ import sys
 import json
 from styles import Colors, Dimensions, Fonts
 from properties import PropertiesPanel
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 from models import Block, Arrow, LayerManager
 
 class IDEF0App:
@@ -38,7 +38,7 @@ class IDEF0App:
         self.layer_manager = LayerManager()  # Менеджер слоев для иерархии
         self.current_right_panel = "properties"  # или "layers"
         self.layers_panel_visible = False
-        # Инициализируем все переменные до setup_ui, чтобы они были доступны при создании UI
+        self.setup_ui()
         self.blocks = []
         self.arrows = []  # список стрелок
         self.next_block_id = 1
@@ -56,13 +56,10 @@ class IDEF0App:
         self.resizing_block = None  # блок, который сейчас изменяется
         self.resize_handle_size = 12  # размер маркеров изменения размера (в 1.5 раза больше, чем было)
         self.resize_preview = None  # превью растягивания
+        self.block_action_buttons = []
         self.arrow_action_buttons = []
         self.arrow_drag_handles = {}  # маркеры для перетаскивания концов стрелок
         self.dragging_arrow_end = None  # какой конец стрелки перетаскивается ("start" или "end")
-        self.dragging_arrow_bend = False  # перетаскивание средней точки изгиба
-        # Режим "создать точку сгиба": следующий клик по холсту ставит bend-точку.
-        self.add_bend_mode = False
-        self.add_bend_arrow_data = None
         self.arrow_drawing_mode = False  # режим рисования стрелок
         self.arrow_start_block = None  # начальный блок для стрелки (если стрелка начинается от блока)
         self.arrow_start_x = None  # начальная координата X (если стрелка начинается не от блока)
@@ -73,8 +70,6 @@ class IDEF0App:
         self.attachment_points = []  # визуальные элементы точек прикрепления
         self.attachment_point_size = 12  # размер точки прикрепления
         self.attachment_snap_distance = 20  # расстояние для прикрепления
-        # Теперь инициализируем UI после инициализации всех переменных
-        self.setup_ui()
     
     def setup_window(self):
         """Настройка главного окна"""
@@ -294,6 +289,12 @@ class IDEF0App:
             elif event.keysym in ('Delete', 'BackSpace'):
                 safe_delete(event)
                 return "break"
+            # Обрабатываем Escape - отмена создания стрелки
+            elif event.keysym == 'Escape':
+                if self.arrow_drawing:
+                    # Отменяем создание стрелки
+                    self._cancel_arrow_drawing()
+                    return "break"
         
         # Привязываем горячие клавиши через bind_all для глобальной работы
         # bind_all работает на всех виджетах и всегда, независимо от фокуса
@@ -430,6 +431,8 @@ class IDEF0App:
             ("Открыть", "FolderOpen", (20,20)),
             ("Сохранить", "Save", (20,20)),
             ("Сохранить как", "Download", (20,20)),
+            ("Экспорт PNG", "Image", (20,20)),
+            ("Импорт", "Upload", (20,20)),
         ]
 
         for text, icon_name, size in toolbar_buttons:
@@ -446,6 +449,10 @@ class IDEF0App:
                 btn.configure(command=self.save_file)
             elif text == "Сохранить как":
                 btn.configure(command=self.save_file_as)
+            elif text == "Экспорт PNG":
+                btn.configure(command=self.export_to_png)
+            elif text == "Импорт":
+                btn.configure(command=self.import_layers)
 
         # Spacer
         spacer = tk.Frame(header_frame, bg=Colors.SURFACE)
@@ -677,11 +684,21 @@ class IDEF0App:
         self.drag_from_sidebar = True
         self.canvas.configure(cursor="crosshair")
         
-        # Создаем превью блока
-        x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-        y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+        # Получаем координаты курсора на canvas
+        # Событие приходит от кнопки, поэтому используем глобальные координаты
+        canvas_x_root = self.canvas.winfo_rootx()
+        canvas_y_root = self.canvas.winfo_rooty()
+        x = self.canvas.canvasx(event.x_root - canvas_x_root)
+        y = self.canvas.canvasy(event.y_root - canvas_y_root)
         
-        width, height = 150, 80
+        # Размеры превью с учетом текущего масштаба canvas
+        # Блоки создаются с размерами 150x80, но визуально масштабируются
+        # Поэтому превью должно иметь те же визуальные размеры
+        base_width, base_height = 150, 80
+        width = base_width * self.zoom_scale
+        height = base_height * self.zoom_scale
+        
+        # Создаем превью так, чтобы курсор был в центре блока
         self.drag_preview = self.canvas.create_rectangle(
             x - width / 2, y - height / 2,
             x + width / 2, y + height / 2,
@@ -695,12 +712,19 @@ class IDEF0App:
     def drag_from_sidebar(self, event):
         """Перетаскивание из панели инструментов"""
         if self.drag_from_sidebar and self.drag_preview:
-            # Преобразуем координаты мыши в координаты холста
-            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            # Получаем координаты курсора на canvas
+            # Событие приходит от кнопки или canvas, используем глобальные координаты
+            canvas_x_root = self.canvas.winfo_rootx()
+            canvas_y_root = self.canvas.winfo_rooty()
+            x = self.canvas.canvasx(event.x_root - canvas_x_root)
+            y = self.canvas.canvasy(event.y_root - canvas_y_root)
             
-            width, height = 150, 80
-            # Обновляем позицию превью
+            # Размеры превью с учетом текущего масштаба canvas
+            base_width, base_height = 150, 80
+            width = base_width * self.zoom_scale
+            height = base_height * self.zoom_scale
+            
+            # Обновляем позицию превью так, чтобы курсор оставался в центре блока
             self.canvas.coords(
                 self.drag_preview,
                 x - width / 2, y - height / 2,
@@ -710,9 +734,11 @@ class IDEF0App:
     def end_drag_from_sidebar(self, event):
         """Завершение перетаскивания из панели инструментов"""
         if self.drag_from_sidebar and self.drag_preview:
-            # Преобразуем координаты мыши в координаты холста
-            x = self.canvas.canvasx(event.x_root - self.root.winfo_rootx())
-            y = self.canvas.canvasy(event.y_root - self.root.winfo_rooty())
+            # Получаем координаты курсора на canvas (используем тот же метод, что и в drag_from_sidebar)
+            canvas_x_root = self.canvas.winfo_rootx()
+            canvas_y_root = self.canvas.winfo_rooty()
+            x = self.canvas.canvasx(event.x_root - canvas_x_root)
+            y = self.canvas.canvasy(event.y_root - canvas_y_root)
             
             # Удаляем превью
             self.canvas.delete(self.drag_preview)
@@ -720,7 +746,7 @@ class IDEF0App:
             self.drag_from_sidebar = False
             self.canvas.configure(cursor="")
             
-            # Создаем новый блок в точке отпускания
+            # Создаем новый блок в точке отпускания (точно там, где было превью)
             self.create_block_at_position(x, y)
 
     def create_block_at_position(self, x, y):
@@ -838,6 +864,17 @@ class IDEF0App:
 
         self.blocks.append(block_data)
 
+        # Применяем текущий масштаб к новому блоку, чтобы он визуально соответствовал другим блокам
+        # canvas.scale("all") масштабирует все элементы, но новые элементы создаются после масштабирования
+        # Поэтому нужно применить текущий масштаб к новому блоку
+        if self.zoom_scale != 1.0:
+            # Используем центр видимой области как точку масштабирования (как в set_zoom и apply_zoom)
+            cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+            cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+            # Масштабируем новый блок до текущего масштаба
+            # Используем все элементы блока (rect и text) через тег
+            self.canvas.scale(block_id, cx, cy, self.zoom_scale, self.zoom_scale)
+
         # Делаем блок перемещаемым и выбираемым
         self.make_block_interactive(block_data)
 
@@ -901,13 +938,51 @@ class IDEF0App:
         model = block_data["model"]
         size = self.resize_handle_size
         
-        # Угловые маркеры
-        handles_positions = {
-            "nw": (model.x - model.width/2, model.y - model.height/2),
-            "ne": (model.x + model.width/2, model.y - model.height/2),
-            "sw": (model.x - model.width/2, model.y + model.height/2),
-            "se": (model.x + model.width/2, model.y + model.height/2)
-        }
+        # Получаем актуальные визуальные координаты блока с canvas (с учетом масштабирования)
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                # Получаем координаты прямоугольника с canvas
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    # coords = [x1, y1, x2, y2]
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_x = (visual_x1 + visual_x2) / 2
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    visual_width = visual_x2 - visual_x1
+                    visual_height = visual_y2 - visual_y1
+                    
+                    # Используем визуальные координаты для позиционирования маркеров
+                    handles_positions = {
+                        "nw": (visual_x1, visual_y1),
+                        "ne": (visual_x2, visual_y1),
+                        "sw": (visual_x1, visual_y2),
+                        "se": (visual_x2, visual_y2)
+                    }
+                else:
+                    # Fallback на координаты модели, если не удалось получить визуальные
+                    handles_positions = {
+                        "nw": (model.x - model.width/2, model.y - model.height/2),
+                        "ne": (model.x + model.width/2, model.y - model.height/2),
+                        "sw": (model.x - model.width/2, model.y + model.height/2),
+                        "se": (model.x + model.width/2, model.y + model.height/2)
+                    }
+            else:
+                # Fallback на координаты модели
+                handles_positions = {
+                    "nw": (model.x - model.width/2, model.y - model.height/2),
+                    "ne": (model.x + model.width/2, model.y - model.height/2),
+                    "sw": (model.x - model.width/2, model.y + model.height/2),
+                    "se": (model.x + model.width/2, model.y + model.height/2)
+                }
+        except (tk.TclError, AttributeError, IndexError):
+            # Fallback на координаты модели в случае ошибки
+            handles_positions = {
+                "nw": (model.x - model.width/2, model.y - model.height/2),
+                "ne": (model.x + model.width/2, model.y - model.height/2),
+                "sw": (model.x - model.width/2, model.y + model.height/2),
+                "se": (model.x + model.width/2, model.y + model.height/2)
+            }
         
         for handle_type, (x, y) in handles_positions.items():
             # Используем круглые маркеры (как у стрелок)
@@ -918,9 +993,11 @@ class IDEF0App:
                 fill=Colors.HANDLE_FILL,
                 outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
                 width=3 if self.is_dark_theme else 1,  # Более толстая обводка в темной теме
-                tags=("resize_handle", block_data["id"], f"handle_{handle_type}")
+                tags=("resize_handle", block_data["id"], f"handle_{handle_type}"),
+                state="normal"  # Убеждаемся, что элемент видим
             )
             block_data["resize_handles"][handle_type] = handle
+            print(f"    Создан handle {handle_type} с id={handle} в позиции ({x}, {y})")
             
             # ВАЖНО: Поднимаем маркер наверх, чтобы он был поверх блока и всех других элементов
             self.canvas.tag_raise(handle)
@@ -952,10 +1029,243 @@ class IDEF0App:
         for handle_id in block_data["resize_handles"].values():
             self.canvas.delete(handle_id)
         block_data["resize_handles"] = {}
+    
+    def create_arrow_buttons(self, block_data):
+        """Создает кнопки внутри блока для создания стрелок"""
+        # Кнопки создания стрелок отключены
+        return
+        
+        model = block_data["model"]
+        button_size = 10  # Размер кнопки
+        
+        # Получаем актуальные визуальные координаты блока с canvas
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_x = (visual_x1 + visual_x2) / 2
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    visual_width = visual_x2 - visual_x1
+                    visual_height = visual_y2 - visual_y1
+                    
+                    # Отступ от края блока для кнопок
+                    offset = 8
+                    
+                    # Кнопка на левой стороне (для стрелки входа)
+                    # Позиционируем кнопку внутри блока, у левого края
+                    left_x = visual_x1 + offset
+                    left_y = visual_center_y
+                    left_button = self.canvas.create_oval(
+                        left_x - button_size/2, left_y - button_size/2,
+                        left_x + button_size/2, left_y + button_size/2,
+                        fill=Colors.PRIMARY,
+                        outline=Colors.PRIMARY,
+                        width=1,
+                        stipple="gray50",  # Полупрозрачность
+                        tags=("arrow_button", block_data["id"], "arrow_button_left"),
+                        state="normal"  # Убеждаемся, что элемент видим
+                    )
+                    print(f"    Создана левая кнопка с id={left_button} в позиции ({left_x}, {left_y})")
+                    
+                    # Кнопка на правой стороне (для стрелки выхода)
+                    # Позиционируем кнопку внутри блока, у правого края
+                    right_x = visual_x2 - offset
+                    right_y = visual_center_y
+                    right_button = self.canvas.create_oval(
+                        right_x - button_size/2, right_y - button_size/2,
+                        right_x + button_size/2, right_y + button_size/2,
+                        fill=Colors.PRIMARY,
+                        outline=Colors.PRIMARY,
+                        width=1,
+                        stipple="gray50",  # Полупрозрачность
+                        tags=("arrow_button", block_data["id"], "arrow_button_right"),
+                        state="normal"  # Убеждаемся, что элемент видим
+                    )
+                    print(f"    Создана правая кнопка с id={right_button} в позиции ({right_x}, {right_y})")
+                    
+                    # Сохраняем ID кнопок
+                    if "arrow_buttons" not in block_data:
+                        block_data["arrow_buttons"] = {}
+                    block_data["arrow_buttons"]["left"] = left_button
+                    block_data["arrow_buttons"]["right"] = right_button
+                    
+                    # Привязываем обработчики событий
+                    def on_left_button_click(event, b=block_data):
+                        """Обработчик клика по левой кнопке - создание перпендикулярной стрелки"""
+                        self.create_perpendicular_arrow(b, "left")
+                        return "break"
+                    
+                    def on_right_button_click(event, b=block_data):
+                        """Обработчик клика по правой кнопке - создание перпендикулярной стрелки"""
+                        self.create_perpendicular_arrow(b, "right")
+                        return "break"
+                    
+                    self.canvas.tag_bind(left_button, "<Button-1>", on_left_button_click)
+                    self.canvas.tag_bind(right_button, "<Button-1>", on_right_button_click)
+                    
+                    # Поднимаем кнопки наверх
+                    self.canvas.tag_raise(left_button)
+                    self.canvas.tag_raise(right_button)
+                    try:
+                        self.canvas.tag_raise(left_button, "all")
+                        self.canvas.tag_raise(right_button, "all")
+                    except tk.TclError:
+                        pass
+        except (tk.TclError, AttributeError, IndexError):
+            pass
+    
+    def update_arrow_buttons_position(self, block_data):
+        """Обновляет позицию кнопок создания стрелок при перемещении блока"""
+        if "arrow_buttons" not in block_data or not block_data["arrow_buttons"]:
+            return
+        
+        button_size = 10
+        offset = 8  # Отступ от края блока
+        
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    
+                    # Обновляем позицию левой кнопки
+                    if "left" in block_data["arrow_buttons"]:
+                        left_button = block_data["arrow_buttons"]["left"]
+                        left_x = visual_x1 + offset
+                        left_y = visual_center_y
+                        self.canvas.coords(
+                            left_button,
+                            left_x - button_size/2, left_y - button_size/2,
+                            left_x + button_size/2, left_y + button_size/2
+                        )
+                    
+                    # Обновляем позицию правой кнопки
+                    if "right" in block_data["arrow_buttons"]:
+                        right_button = block_data["arrow_buttons"]["right"]
+                        right_x = visual_x2 - offset
+                        right_y = visual_center_y
+                        self.canvas.coords(
+                            right_button,
+                            right_x - button_size/2, right_y - button_size/2,
+                            right_x + button_size/2, right_y + button_size/2
+                        )
+        except (tk.TclError, AttributeError, IndexError):
+            pass
+    
+    def _restore_arrow_buttons(self):
+        """Восстанавливает скрытые кнопки создания стрелок"""
+        if self.selected_block and "arrow_buttons" in self.selected_block:
+            for button_id in self.selected_block["arrow_buttons"].values():
+                try:
+                    self.canvas.itemconfig(button_id, state="normal")
+                except tk.TclError:
+                    pass
+    
+    def _cancel_arrow_drawing(self):
+        """Отменяет создание стрелки и восстанавливает состояние"""
+        # Удаляем превью
+        if self.arrow_preview_line:
+            self.canvas.delete(self.arrow_preview_line)
+            self.arrow_preview_line = None
+        
+        # Восстанавливаем кнопки
+        self._restore_arrow_buttons()
+        
+        # Сбрасываем состояние
+        self.arrow_start_block = None
+        self.arrow_start_x = None
+        self.arrow_start_y = None
+        self.arrow_start_side = None
+        self.arrow_target_block = None
+        self.arrow_target_side = None
+        self.arrow_drawing = False
+        self.arrow_drawing_mode = False
+        self.current_mode = "select"
+        self.canvas.configure(cursor="")
+    
+    def delete_arrow_button(self, block_data, side):
+        """Удаляет кнопку создания стрелки от указанной стороны блока"""
+        if "arrow_buttons" in block_data and side in block_data["arrow_buttons"]:
+            button_id = block_data["arrow_buttons"][side]
+            try:
+                self.canvas.delete(button_id)
+            except tk.TclError:
+                pass
+            del block_data["arrow_buttons"][side]
+    
+    def delete_arrow_buttons(self, block_data):
+        """Удаляет кнопки создания стрелок"""
+        if "arrow_buttons" in block_data:
+            for button_id in block_data["arrow_buttons"].values():
+                try:
+                    self.canvas.delete(button_id)
+                except tk.TclError:
+                    pass
+            block_data["arrow_buttons"] = {}
+    
+    def create_perpendicular_arrow(self, block_data, side):
+        """Создает небольшую перпендикулярную стрелку от кнопки"""
+        # Сохраняем состояние для undo
+        self.save_state()
+        
+        model = block_data["model"]
+        arrow_length = 35  # Длина перпендикулярной стрелки
+        
+        # Удаляем кнопку после клика
+        if "arrow_buttons" in block_data and side in block_data["arrow_buttons"]:
+            button_id = block_data["arrow_buttons"][side]
+            try:
+                self.canvas.delete(button_id)
+                del block_data["arrow_buttons"][side]
+            except tk.TclError:
+                pass
+        
+        try:
+            rect_id = block_data.get("rect_id")
+            if rect_id:
+                coords = self.canvas.coords(rect_id)
+                if len(coords) >= 4:
+                    visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                    visual_center_y = (visual_y1 + visual_y2) / 2
+                    
+                    if side == "left":
+                        # Стрелка входа - выходит влево
+                        # Начало стрелки - слева от блока (на расстоянии arrow_length)
+                        start_x = visual_x1 - arrow_length
+                        start_y = visual_center_y
+                        # Конец стрелки - на левой границе блока (входит в блок)
+                        
+                        # Создаем стрелку от точки к блоку (входит в блок слева)
+                        self.create_arrow_from_point_to_block(
+                            start_x, start_y,
+                            block_data["id"],
+                            to_side="left"
+                        )
+                    else:  # right
+                        # Стрелка выхода - выходит вправо
+                        # Начало стрелки - на правой границе блока
+                        # Конец стрелки - справа от блока (на расстоянии arrow_length)
+                        end_x = visual_x2 + arrow_length
+                        end_y = visual_center_y
+                        
+                        # Создаем стрелку от блока к точке (выходит из блока справа)
+                        self.create_arrow_from_block_to_point(
+                            block_data["id"],
+                            end_x, end_y,
+                            from_side="right"
+                        )
+        except (tk.TclError, AttributeError, IndexError) as e:
+            print(f"Ошибка при создании перпендикулярной стрелки: {e}")
 
     def start_resize(self, event, block_data, handle_type):
         """Начало изменения размера"""
+        print(f"start_resize вызван: режим={self.current_mode}, блок={block_data['id']}, handle={handle_type}")
         if self.current_mode == "select":
+            print(f"Начинаем изменение размера блока {block_data['id']}")
             self.resizing_block = block_data
             model = block_data["model"]
             
@@ -997,16 +1307,16 @@ class IDEF0App:
                 "start_top": top,
                 "start_bottom": bottom
             }
-            return "break"
+        return "break"  # Всегда возвращаем "break", чтобы предотвратить распространение события
 
     def do_resize(self, event, block_data, handle_type):
         """Изменение размера блока (пока только превью)"""
         if self.resizing_block == block_data and "resize_data" in block_data and self.resize_preview:
             resize_data = block_data["resize_data"]
             
-            # Текущая позиция мыши - это новый угол блока
-            new_x = event.x
-            new_y = event.y
+            # Текущая позиция мыши - это новый угол блока (преобразуем в координаты холста)
+            new_x = self.canvas.canvasx(event.x)
+            new_y = self.canvas.canvasy(event.y)
             
             # Фиксированный угол (противоположный)
             fixed_x = resize_data["fixed_x"]
@@ -1054,9 +1364,9 @@ class IDEF0App:
             model = block_data["model"]
             handle_type = resize_data["handle_type"]
             
-            # Текущая позиция мыши - это новый угол блока
-            new_x = event.x
-            new_y = event.y
+            # Текущая позиция мыши - это новый угол блока (преобразуем в координаты холста)
+            new_x = self.canvas.canvasx(event.x)
+            new_y = self.canvas.canvasy(event.y)
             
             # Фиксированный угол (противоположный)
             fixed_x = resize_data["fixed_x"]
@@ -1117,6 +1427,10 @@ class IDEF0App:
             # Обновляем стрелки, соединенные с этим блоком
             self.update_arrows_for_block(block_data["id"])
             
+            # Обновляем позицию кнопок создания стрелок
+            if self.selected_block == block_data:
+                self.update_arrow_buttons_position(block_data)
+            
             # Обновляем свойства
             if self.selected_block == block_data:
                 self.properties_panel.update_properties(model)
@@ -1147,6 +1461,8 @@ class IDEF0App:
         # Обновляем маркеры изменения размера
         if block_data == self.selected_block:
             self.create_resize_handles(block_data)
+            # Обновляем кнопки создания стрелок
+            self.create_arrow_buttons(block_data)
             # ВАЖНО: Убеждаемся, что выбранный блок всегда наверху после любых обновлений
             self._raise_block(block_data)
             # Поднимаем все маркеры наверх
@@ -1155,6 +1471,14 @@ class IDEF0App:
                     self.canvas.tag_raise(handle_id)
                 except tk.TclError:
                     pass
+            # Поднимаем кнопки наверх
+            if "arrow_buttons" in block_data:
+                for button_id in block_data["arrow_buttons"].values():
+                    try:
+                        self.canvas.tag_raise(button_id)
+                        self.canvas.tag_raise(button_id, "all")
+                    except tk.TclError:
+                        pass
         
         # Обновляем стрелки, соединенные с этим блоком
         self.update_arrows_for_block(block_data["id"])
@@ -1165,6 +1489,14 @@ class IDEF0App:
     def make_block_interactive(self, block_data):
         """Делает блок перемещаемым по холсту и выбираемым"""
         def start_drag(event):
+            # Проверяем, не кликнули ли по маркеру изменения размера
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "resize_handle" in tags:
+                    # Клик по маркеру изменения размера - пропускаем обработку
+                    return None
+            
             # Не начинаем перетаскивание в режиме рисования стрелок
             if self.current_mode == "draw_arrow":
                 return None
@@ -1205,6 +1537,8 @@ class IDEF0App:
                 if block_data == self.selected_block:
                     for handle_id in block_data["resize_handles"].values():
                         self.canvas.move(handle_id, dx, dy)
+                    # Обновляем позицию кнопок создания стрелок
+                    self.update_arrow_buttons_position(block_data)
 
                 # Обновляем данные о перетаскивании
                 block_data["drag_data"] = {"x": x, "y": y}
@@ -1238,30 +1572,59 @@ class IDEF0App:
         
         def arrow_click(event):
             """Обработчик клика по блоку в режиме рисования стрелок"""
+            # Проверяем, не кликнули ли по маркеру изменения размера
+            items = self.canvas.find_overlapping(event.x, event.y, event.x, event.y)
+            for item in items:
+                tags = self.canvas.gettags(item)
+                if "resize_handle" in tags:
+                    # Клик по маркеру изменения размера - пропускаем обработку
+                    return None
+            
             # В режиме рисования стрелок — пропускаем дальше (обработает on_canvas_click)
             if self.current_mode == "draw_arrow":
                 return None
             # В обычном режиме выбора — сразу выбираем блок по одиночному клику
             if self.current_mode == "select":
+                print(f"Клик по блоку {block_data['id']}, пытаемся выделить...")
                 self.select_block(block_data)
                 return "break"
             return None
 
         # Привязываем обработчики событий
         # Важно: arrow_click должен быть первым, чтобы перехватывать клики в режиме рисования стрелок
-        for item_id in [block_data["rect_id"], block_data["text_id"]]:
-            self.canvas.tag_bind(item_id, "<Button-1>", arrow_click)  # Сначала обработчик стрелок
-            self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
-            self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
-            self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
-            self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
+        block_id = block_data["id"]
+        
+        # Привязываем обработчики и через теги, и через ID элементов для надежности
+        if block_data.get("rect_id") and block_data.get("text_id"):
+            # Привязываем через теги блока (более надежно после масштабирования)
+            try:
+                self.canvas.tag_bind(block_id, "<Button-1>", arrow_click)
+                self.canvas.tag_bind(block_id, "<ButtonPress-1>", start_drag)
+                self.canvas.tag_bind(block_id, "<B1-Motion>", drag)
+                self.canvas.tag_bind(block_id, "<ButtonRelease-1>", end_drag)
+                self.canvas.tag_bind(block_id, "<Double-Button-1>", double_click)
+            except tk.TclError:
+                pass
+            
+            # Также привязываем через ID элементов (fallback)
+            for item_id in [block_data["rect_id"], block_data["text_id"]]:
+                try:
+                    self.canvas.tag_bind(item_id, "<Button-1>", arrow_click)
+                    self.canvas.tag_bind(item_id, "<ButtonPress-1>", start_drag)
+                    self.canvas.tag_bind(item_id, "<B1-Motion>", drag)
+                    self.canvas.tag_bind(item_id, "<ButtonRelease-1>", end_drag)
+                    self.canvas.tag_bind(item_id, "<Double-Button-1>", double_click)
+                except tk.TclError:
+                    pass
 
     def select_block(self, block_data):
         """Выбирает блок и обновляет панель свойств"""
         # Проверяем, что блок принадлежит текущему уровню
         current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        print(f"Попытка выделить блок {block_data['model'].code}, parent_id={block_data['model'].parent_id}, текущий parent={self.layer_manager.get_current_parent_id()}")
+        print(f"Текущие блоки уровня: {[b.code for b in current_blocks]}")
         if block_data["model"] not in current_blocks:
-            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню")
+            print(f"Блок {block_data['model'].code} не принадлежит текущему уровню (parent_id={block_data['model'].parent_id}, текущий parent={self.layer_manager.get_current_parent_id()})")
             return
         
         # Если открыто меню настроек, закрываем его
@@ -1282,6 +1645,7 @@ class IDEF0App:
                 width=prev_model.border_width
             )
             self.delete_resize_handles(self.selected_block)
+            self.delete_arrow_buttons(self.selected_block)
             self.hide_block_action_buttons()
         
         # Сбрасываем выделение стрелки, если была выбрана
@@ -1290,29 +1654,79 @@ class IDEF0App:
         
         # Выделяем новый блок
         self.selected_block = block_data
-        self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+        
+        # Проверяем, что rect_id существует
+        if not block_data.get("rect_id"):
+            print(f"ОШИБКА: Блок {block_data['id']} не имеет rect_id!")
+            return
+        
+        try:
+            self.canvas.itemconfig(block_data["rect_id"], outline=Colors.PRIMARY, width=3)
+            print(f"Обводка применена к блоку {block_data['id']}, rect_id={block_data['rect_id']}")
+        except tk.TclError as e:
+            print(f"ОШИБКА при применении обводки к блоку {block_data['id']}: {e}")
+            return
         
         # ВАЖНО: Поднимаем блок наверх, чтобы обводка выделения была видна
         self._raise_block(block_data)
         
         # Создаем маркеры изменения размера
+        print(f"Создаем resize handles для блока {block_data['id']}...")
         self.create_resize_handles(block_data)
-        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока и всех элементов
-        for handle_id in block_data.get("resize_handles", {}).values():
+        print(f"Resize handles созданы: {list(block_data.get('resize_handles', {}).keys())}")
+        
+        # Проверяем, что handles действительно созданы и видны
+        for handle_type, handle_id in block_data.get("resize_handles", {}).items():
             try:
-                self.canvas.tag_raise(handle_id)
-                # Поднимаем еще выше для гарантии видимости
-                self.canvas.tag_raise(handle_id, "all")
-            except tk.TclError:
-                pass
+                coords = self.canvas.coords(handle_id)
+                print(f"  Handle {handle_type} (id={handle_id}): coords={coords}")
+            except tk.TclError as e:
+                print(f"  ОШИБКА: Handle {handle_type} не существует: {e}")
+        
+        # ВАЖНО: Поднимаем все маркеры наверх, чтобы они были поверх блока и всех элементов
+        # Делаем это несколько раз для надежности
+        for _ in range(3):
+            for handle_id in block_data.get("resize_handles", {}).values():
+                try:
+                    self.canvas.tag_raise(handle_id)
+                    self.canvas.tag_raise(handle_id, "all")
+                except tk.TclError:
+                    pass
+        
+        # Создаем кнопки для создания стрелок на границах блока
+        print(f"Создаем arrow buttons для блока {block_data['id']}...")
+        self.create_arrow_buttons(block_data)
+        print(f"Arrow buttons созданы: {list(block_data.get('arrow_buttons', {}).keys())}")
+        
+        # Проверяем, что кнопки действительно созданы и видны
+        for button_side, button_id in block_data.get("arrow_buttons", {}).items():
+            try:
+                coords = self.canvas.coords(button_id)
+                print(f"  Button {button_side} (id={button_id}): coords={coords}")
+            except tk.TclError as e:
+                print(f"  ОШИБКА: Button {button_side} не существует: {e}")
+        
+        # Поднимаем кнопки наверх несколько раз для надежности
+        if "arrow_buttons" in block_data:
+            for _ in range(3):
+                for button_id in block_data["arrow_buttons"].values():
+                    try:
+                        self.canvas.tag_raise(button_id)
+                        self.canvas.tag_raise(button_id, "all")
+                    except tk.TclError:
+                        pass
 
         # Кнопки действий справа от блока
+        print(f"Показываем action buttons для блока {block_data['id']}...")
         self.show_block_action_buttons(block_data)
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(block_data["model"])
         
-        print(f"Выбран блок: {block_data['id']}")
+        # Принудительно обновляем canvas, чтобы все элементы были видны
+        self.canvas.update_idletasks()
+        
+        print(f"Блок {block_data['id']} успешно выделен")
 
     def select_arrow(self, arrow_data):
         """Выбирает стрелку и обновляет панель свойств"""
@@ -2059,6 +2473,8 @@ class IDEF0App:
 
     def show_block_action_buttons(self, block_data):
         """Создаёт три кнопки справа от выбранного блока на холсте."""
+        # Кнопки действий отключены
+        return
         if not hasattr(self, "canvas"):
             return
 
@@ -2196,10 +2612,78 @@ class IDEF0App:
         self.block_action_buttons = []
 
     def copy_block(self, block_data):
-        """Создаёт копию блока рядом с исходным."""
+        """Создаёт копию блока рядом с исходным с новым ID."""
+        # Сохраняем состояние для undo ДО создания блока
+        self.save_state()
+        
         model = block_data["model"]
         offset = 30
-        self.create_block_at_position(model.x + offset, model.y + offset)
+        
+        # Создаем новый уникальный ID
+        block_id = f"block_{self.next_block_id}"
+        self.next_block_id += 1
+        
+        # Создаем копию блока с новым ID
+        new_block = Block(
+            block_id=block_id,
+            name=model.name,
+            code=model.code,
+            element_type=model.element_type,
+            description=model.description,
+            x=model.x + offset,
+            y=model.y + offset,
+            width=model.width,
+            height=model.height,
+            color=model.color,
+            border_width=model.border_width,
+            parent_id=model.parent_id
+        )
+        
+        # Создаем визуальное представление
+        x1 = new_block.x - new_block.width / 2
+        y1 = new_block.y - new_block.height / 2
+        x2 = new_block.x + new_block.width / 2
+        y2 = new_block.y + new_block.height / 2
+        
+        rect = self.canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill=new_block.color,
+            outline=Colors.BLOCK_BORDER,
+            width=new_block.border_width,
+            tags=("block", block_id)
+        )
+        
+        formatted_text = self.format_block_text(new_block.name, new_block.width)
+        text = self.canvas.create_text(
+            new_block.x, new_block.y,
+            text=formatted_text,
+            font=("Segoe UI", 10),
+            fill=Colors.TEXT_PRIMARY,
+            justify="center",
+            width=new_block.width - 10,
+            tags=("block_text", block_id)
+        )
+        
+        new_block_data = {
+            "id": block_id,
+            "model": new_block,
+            "rect_id": rect,
+            "text_id": text,
+            "resize_handles": {}
+        }
+        
+        self.blocks.append(new_block_data)
+        
+        # Делаем блок перемещаемым и выбираемым
+        self.make_block_interactive(new_block_data)
+        
+        # Автоматически выбираем новый блок
+        self.select_block(new_block_data)
+        
+        # Проверяем ошибки нумерации после создания блока
+        self.root.after(100, self.check_numbering_errors)
+        
+        return new_block_data
 
     def delete_block_direct(self, block_data):
         """Удаление конкретного блока по кнопке (не затрагивает выбранную стрелку)."""
@@ -2409,6 +2893,8 @@ class IDEF0App:
     
     def show_arrow_action_buttons(self, arrow_data):
         """Показывает кнопки действий для выбранной стрелки."""
+        # Кнопки действий отключены
+        return
         if not hasattr(self, "canvas"):
             return
         
@@ -2428,14 +2914,11 @@ class IDEF0App:
         
         buttons_spec = [
             ("copy", "Копировать", "Copy"),
-            ("add_bend", "Создать точку сгиба", "Square"),
-            ("unlock_route", "Разморозить маршрут", "Undo"),
             ("delete", "Удалить", "Close"),
         ]
         
         self.arrow_action_buttons = []
         
-        mid_offset = (len(buttons_spec) - 1) / 2
         for index, (action, tooltip, icon_name) in enumerate(buttons_spec):
             btn = tk.Button(
                 self.canvas,
@@ -2453,16 +2936,12 @@ class IDEF0App:
             
             if action == "copy":
                 btn.configure(command=lambda a=arrow_data: self.copy_arrow(a))
-            elif action == "add_bend":
-                btn.configure(command=lambda a=arrow_data: self.enable_add_bend_mode(a))
-            elif action == "unlock_route":
-                btn.configure(command=lambda a=arrow_data: self.unlock_arrow_route(a))
             elif action == "delete":
                 btn.configure(command=lambda a=arrow_data: self.delete_arrow_direct(a))
             
             self.apply_hover_effect(btn, enable=False)
             
-            y = base_y + (index - mid_offset) * spacing
+            y = base_y + (index - 1) * spacing
             win_id = self.canvas.create_window(
                 base_x,
                 y,
@@ -2484,67 +2963,13 @@ class IDEF0App:
         base_x = mid_x + 24
         base_y = mid_y
         spacing = 32
-        mid_offset = (len(self.arrow_action_buttons) - 1) / 2
         
         for index, data in enumerate(self.arrow_action_buttons):
-            y = base_y + (index - mid_offset) * spacing
+            y = base_y + (index - 1) * spacing
             try:
                 self.canvas.coords(data["window_id"], base_x, y)
             except tk.TclError:
                 continue
-
-    def unlock_arrow_route(self, arrow_data):
-        """Размораживает авто-маршрут стрелки: возвращает обычный авто-роутинг."""
-        if not arrow_data:
-            return
-        arrow = arrow_data.get("arrow")
-        if not arrow:
-            return
-        # Сохраняем состояние для undo ДО изменения
-        self.save_state()
-        arrow.route_locked = False
-        arrow.locked_path = None
-        self.draw_arrow(arrow_data)
-        self.update_arrow_drag_handles(arrow_data)
-        self.update_arrow_action_buttons_position(arrow_data)
-
-    def enable_add_bend_mode(self, arrow_data):
-        """
-        Включает режим создания точки сгиба: следующий клик по холсту поставит bend_x/bend_y.
-        Ничего не делает сразу.
-        """
-        if not arrow_data:
-            return
-        if self.selected_arrow != arrow_data:
-            self.select_arrow(arrow_data)
-        self.add_bend_mode = True
-        self.add_bend_arrow_data = arrow_data
-        try:
-            self.canvas.configure(cursor="crosshair")
-        except Exception:
-            pass
-
-    def _exit_add_bend_mode(self):
-        self.add_bend_mode = False
-        self.add_bend_arrow_data = None
-        try:
-            # Возвращаем обычный курсор выбора
-            if self.current_mode == "select":
-                self.canvas.configure(cursor="")
-        except Exception:
-            pass
-
-    def set_arrow_bend_point(self, arrow_data, x, y):
-        """Ставит точку сгиба для стрелки (bend_x/bend_y)."""
-        arrow = arrow_data.get("arrow")
-        if not arrow:
-            return
-        self.save_state()
-        arrow.bend_x = float(x)
-        arrow.bend_y = float(y)
-        self.draw_arrow(arrow_data)
-        self.update_arrow_drag_handles(arrow_data)
-        self.update_arrow_action_buttons_position(arrow_data)
     
     def hide_arrow_action_buttons(self):
         """Удаляет кнопки действий для стрелки с холста."""
@@ -2577,9 +3002,6 @@ class IDEF0App:
                 new_arrow_data["arrow"].color = arrow.color
                 new_arrow_data["arrow"].width = arrow.width
                 new_arrow_data["arrow"].style = arrow.style
-                # Копируем изгиб (если был задан)
-                new_arrow_data["arrow"].bend_x = arrow.bend_x
-                new_arrow_data["arrow"].bend_y = arrow.bend_y
                 self.draw_arrow(new_arrow_data)
     
     def delete_arrow_direct(self, arrow_data):
@@ -2637,25 +3059,6 @@ class IDEF0App:
         self.canvas.tag_raise(handle_start)
         self.canvas.tag_raise(handle_end)
         
-        # Средняя ручка сгиба показывается ТОЛЬКО если bend задан явно (через кнопку),
-        # чтобы при захвате конца стрелки не появлялась "третья точка" сама по себе.
-        handle_bend = None
-        if arrow.bend_x is not None and arrow.bend_y is not None:
-            mid_x, mid_y = arrow.bend_x, arrow.bend_y
-            bend_size = 10  # чуть меньше, чем у концов
-            bend_outline_color = Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE
-            bend_outline_width = 3 if self.is_dark_theme else 1
-            handle_bend = self.canvas.create_oval(
-                mid_x - bend_size, mid_y - bend_size,
-                mid_x + bend_size, mid_y + bend_size,
-                fill=Colors.HANDLE_FILL,
-                outline=bend_outline_color,
-                width=bend_outline_width,
-                tags=("arrow_drag_handle", "arrow_handle_bend", arrow.id)
-            )
-            self.arrow_drag_handles[arrow.id]["bend"] = handle_bend
-            self.canvas.tag_raise(handle_bend)
-        
         # Привязываем обработчики для перетаскивания
         self.canvas.tag_bind(handle_start, "<ButtonPress-1>", 
                            lambda e, a=arrow_data: self.start_arrow_drag(e, a, "start"))
@@ -2670,19 +3073,6 @@ class IDEF0App:
                            lambda e, a=arrow_data: self.do_arrow_drag(e, a, "end"))
         self.canvas.tag_bind(handle_end, "<ButtonRelease-1>", 
                            lambda e, a=arrow_data: self.end_arrow_drag(e, a))
-        
-        if handle_bend:
-            # Перетаскивание изгиба
-            self.canvas.tag_bind(handle_bend, "<ButtonPress-1>",
-                               lambda e, a=arrow_data: self.start_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<B1-Motion>",
-                               lambda e, a=arrow_data: self.do_arrow_bend_drag(e, a))
-            self.canvas.tag_bind(handle_bend, "<ButtonRelease-1>",
-                               lambda e, a=arrow_data: self.end_arrow_bend_drag(e, a))
-            
-            # Double click по средней ручке — сброс изгиба
-            self.canvas.tag_bind(handle_bend, "<Double-Button-1>",
-                               lambda e, a=arrow_data: self.reset_arrow_bend(e, a))
     
     def delete_arrow_drag_handles(self):
         """Удаляет маркеры перетаскивания стрелки."""
@@ -2722,74 +3112,8 @@ class IDEF0App:
             self.canvas.coords(handles["end"],
                              arrow.display_x2 - handle_size, arrow.display_y2 - handle_size,
                              arrow.display_x2 + handle_size, arrow.display_y2 + handle_size)
-            # Средняя ручка: обновляем только если она реально существует (bend задан явно)
-            if handles.get("bend") and arrow.bend_x is not None and arrow.bend_y is not None:
-                bx, by = arrow.bend_x, arrow.bend_y
-                bend_size = 10
-                self.canvas.coords(handles["bend"],
-                                 bx - bend_size, by - bend_size,
-                                 bx + bend_size, by + bend_size)
         except tk.TclError:
             pass
-
-    def start_arrow_bend_drag(self, event, arrow_data):
-        """Начало перетаскивания средней точки изгиба стрелки."""
-        if self.current_mode != "select":
-            return
-        self.dragging_arrow_bend = True
-        arrow = arrow_data["arrow"]
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
-        
-        # Если пользователь вручную двигает bend — это явная ручная правка, размораживаем авто-маршрут.
-        arrow.route_locked = False
-        arrow.locked_path = None
-        
-        # Если bend ещё не задан — «активируем» его на текущей позиции ручки, чтобы далее он сохранялся.
-        if arrow.bend_x is None or arrow.bend_y is None:
-            arrow.bend_x = x
-            arrow.bend_y = y
-        
-        arrow_data["bend_drag_data"] = {
-            "offset_x": x - arrow.bend_x,
-            "offset_y": y - arrow.bend_y
-        }
-        return "break"
-
-    def do_arrow_bend_drag(self, event, arrow_data):
-        """Перетаскивание средней точки изгиба."""
-        if not self.dragging_arrow_bend or "bend_drag_data" not in arrow_data:
-            return
-        arrow = arrow_data["arrow"]
-        x = self.canvas.canvasx(event.x)
-        y = self.canvas.canvasy(event.y)
-        off = arrow_data["bend_drag_data"]
-        
-        arrow.bend_x = x - off.get("offset_x", 0)
-        arrow.bend_y = y - off.get("offset_y", 0)
-        
-        # Перерисовываем с учётом bend-waypoint
-        self.draw_arrow(arrow_data)
-        self.update_arrow_drag_handles(arrow_data)
-        self.update_arrow_action_buttons_position(arrow_data)
-        return "break"
-
-    def end_arrow_bend_drag(self, event, arrow_data):
-        """Завершение перетаскивания изгиба."""
-        if "bend_drag_data" in arrow_data:
-            del arrow_data["bend_drag_data"]
-        self.dragging_arrow_bend = False
-        return "break"
-
-    def reset_arrow_bend(self, event, arrow_data):
-        """Сбрасывает пользовательский изгиб (возвращает авто-роутинг)."""
-        arrow = arrow_data["arrow"]
-        arrow.bend_x = None
-        arrow.bend_y = None
-        self.draw_arrow(arrow_data)
-        self.update_arrow_drag_handles(arrow_data)
-        self.update_arrow_action_buttons_position(arrow_data)
-        return "break"
     
     def start_arrow_drag(self, event, arrow_data, end_type):
         """Начало перетаскивания конца стрелки."""
@@ -2799,10 +3123,6 @@ class IDEF0App:
         arrow = arrow_data["arrow"]
         x = self.canvas.canvasx(event.x)
         y = self.canvas.canvasy(event.y)
-        
-        # Любое ручное редактирование конца — размораживаем авто-маршрут
-        arrow.route_locked = False
-        arrow.locked_path = None
         
         # ВАЖНО: Сразу открепляем стрелку при начале перетаскивания, если она была прикреплена
         # Это позволяет открепить и двигать стрелку в одно действие
@@ -2941,15 +3261,6 @@ class IDEF0App:
                 distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
                 # Прикрепляем только если достаточно близко к точке прикрепления
                 if distance <= attachment_threshold:
-                    # Замораживаем текущий авто-маршрут (колена) перед прикреплением,
-                    # чтобы прикрепление не "пересчитывало" форму стрелки.
-                    try:
-                        rp = arrow_data.get("routing_path")
-                        if rp and len(rp) >= 2:
-                            arrow.route_locked = True
-                            arrow.locked_path = [[p[0], p[1]] for p in rp]
-                    except Exception:
-                        pass
                     arrow.connect_to_block(block_id, side, is_start=True, attachment_point=point_index)
                     arrow.display_x1 = point_x
                     arrow.display_y1 = point_y
@@ -2972,14 +3283,6 @@ class IDEF0App:
                 distance = math.sqrt((x - point_x)**2 + (y - point_y)**2)
                 # Прикрепляем только если достаточно близко к точке прикрепления
                 if distance <= attachment_threshold:
-                    # Замораживаем текущий авто-маршрут (колена) перед прикреплением
-                    try:
-                        rp = arrow_data.get("routing_path")
-                        if rp and len(rp) >= 2:
-                            arrow.route_locked = True
-                            arrow.locked_path = [[p[0], p[1]] for p in rp]
-                    except Exception:
-                        pass
                     arrow.connect_to_block(block_id, side, is_start=False, attachment_point=point_index)
                     arrow.display_x2 = point_x
                     arrow.display_y2 = point_y
@@ -3007,8 +3310,6 @@ class IDEF0App:
                 self.canvas.tag_raise(handles["start"])
             if handles.get("end"):
                 self.canvas.tag_raise(handles["end"])
-            if handles.get("bend"):
-                self.canvas.tag_raise(handles["bend"])
         
         # Обновляем маркеры (позиции)
         self.update_arrow_drag_handles(arrow_data)
@@ -3017,6 +3318,9 @@ class IDEF0App:
         if "drag_data" in arrow_data:
             del arrow_data["drag_data"]
         self.dragging_arrow_end = None
+        
+        # Проверяем ошибки валидации после изменения стрелки
+        self.check_numbering_errors()
     
     def show_attachment_points(self, exclude_block_id=None):
         """
@@ -3041,36 +3345,73 @@ class IDEF0App:
             if block_data["id"] == exclude_block_id:
                 continue
             
-            block = block_data["model"]
-            
-            # Показываем точки на всех сторонах
-            for side in ["left", "right", "top", "bottom"]:
-                points = block.get_attachment_points(side)
-                for point_index, (px, py) in enumerate(points):
-                    if icon:
-                        # Используем изображение
-                        point_id = self.canvas.create_image(
-                            px, py,
-                            image=icon,
-                            tags=("attachment_point", block_data["id"], side, str(point_index))
-                        )
-                    else:
-                        # Используем круг как запасной вариант
-                        # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
-                        size = self.attachment_point_size / 2
-                        point_id = self.canvas.create_oval(
-                            px - size, py - size,
-                            px + size, py + size,
-                            fill=Colors.HANDLE_FILL,
-                            outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
-                            width=3 if self.is_dark_theme else 2,  # Более толстая обводка в темной теме
-                            tags=("attachment_point", block_data["id"], side, str(point_index))
-                        )
-                    
-                    self.attachment_points.append(point_id)
+            # Получаем актуальные визуальные координаты блока с canvas
+            try:
+                rect_id = block_data.get("rect_id")
+                if not rect_id:
+                    continue
+                
+                coords = self.canvas.coords(rect_id)
+                if len(coords) < 4:
+                    continue
+                
+                # Вычисляем визуальные координаты блока
+                visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                visual_center_x = (visual_x1 + visual_x2) / 2
+                visual_center_y = (visual_y1 + visual_y2) / 2
+                visual_width = visual_x2 - visual_x1
+                visual_height = visual_y2 - visual_y1
+                
+                # Показываем точки на всех сторонах на границе блока
+                for side in ["left", "right", "top", "bottom"]:
+                    # Вычисляем координаты точек прикрепления на границе блока
+                    for point_index in range(3):
+                        if side == "left" or side == "right":
+                            # Вертикальная сторона - 3 точки по вертикали
+                            offset = (point_index - 1) * (visual_height / 3)  # -height/3, 0, height/3
+                            if side == "left":
+                                px = visual_x1  # Левая граница
+                                py = visual_center_y + offset
+                            else:  # right
+                                px = visual_x2  # Правая граница
+                                py = visual_center_y + offset
+                        else:  # top or bottom
+                            # Горизонтальная сторона - 3 точки по горизонтали
+                            offset = (point_index - 1) * (visual_width / 3)  # -width/3, 0, width/3
+                            if side == "top":
+                                px = visual_center_x + offset
+                                py = visual_y1  # Верхняя граница
+                            else:  # bottom
+                                px = visual_center_x + offset
+                                py = visual_y2  # Нижняя граница
+                        
+                        if icon:
+                            # Используем изображение
+                            point_id = self.canvas.create_image(
+                                px, py,
+                                image=icon,
+                                tags=("attachment_point", block_data["id"], side, str(point_index))
+                            )
+                        else:
+                            # Используем круг как запасной вариант
+                            # В темной теме используем темный цвет #002137 с яркой обводкой для видимости
+                            size = self.attachment_point_size / 2
+                            point_id = self.canvas.create_oval(
+                                px - size, py - size,
+                                px + size, py + size,
+                                fill=Colors.HANDLE_FILL,
+                                outline=Colors.TEXT_PRIMARY if self.is_dark_theme else Colors.SURFACE,
+                                width=3 if self.is_dark_theme else 2,  # Более толстая обводка в темной теме
+                                tags=("attachment_point", block_data["id"], side, str(point_index))
+                            )
+                        
+                        self.attachment_points.append(point_id)
+            except (tk.TclError, ValueError, IndexError) as e:
+                print(f"Ошибка при создании точек прикрепления для блока {block_data.get('id', 'unknown')}: {e}")
+                continue
     
     def update_attachment_points(self):
-        """Обновляет позиции всех видимых точек прикрепления"""
+        """Обновляет позиции всех видимых точек прикрепления на основе визуальных координат блоков"""
         if not hasattr(self, "attachment_points") or not self.attachment_points:
             return
         
@@ -3094,18 +3435,51 @@ class IDEF0App:
             except (tk.TclError, ValueError, IndexError):
                 continue
         
-        # Обновляем координаты каждой точки
+        # Обновляем координаты каждой точки на основе визуальных координат блока
         for point_id, (block_id, side, point_index, is_image) in attachment_data.items():
             # Находим блок
             block_data = next((b for b in self.blocks if b["id"] == block_id), None)
             if not block_data:
                 continue
             
-            block = block_data["model"]
-            points = block.get_attachment_points(side)
-            
-            if point_index < len(points):
-                px, py = points[point_index]
+            # Получаем актуальные визуальные координаты блока с canvas
+            try:
+                rect_id = block_data.get("rect_id")
+                if not rect_id:
+                    continue
+                
+                coords = self.canvas.coords(rect_id)
+                if len(coords) < 4:
+                    continue
+                
+                # Вычисляем визуальные координаты блока
+                visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                visual_center_x = (visual_x1 + visual_x2) / 2
+                visual_center_y = (visual_y1 + visual_y2) / 2
+                visual_width = visual_x2 - visual_x1
+                visual_height = visual_y2 - visual_y1
+                
+                # Вычисляем координаты точки прикрепления на границе блока
+                if side == "left" or side == "right":
+                    # Вертикальная сторона - 3 точки по вертикали
+                    offset = (point_index - 1) * (visual_height / 3)  # -height/3, 0, height/3
+                    if side == "left":
+                        px = visual_x1  # Левая граница
+                        py = visual_center_y + offset
+                    else:  # right
+                        px = visual_x2  # Правая граница
+                        py = visual_center_y + offset
+                else:  # top or bottom
+                    # Горизонтальная сторона - 3 точки по горизонтали
+                    offset = (point_index - 1) * (visual_width / 3)  # -width/3, 0, width/3
+                    if side == "top":
+                        px = visual_center_x + offset
+                        py = visual_y1  # Верхняя граница
+                    else:  # bottom
+                        px = visual_center_x + offset
+                        py = visual_y2  # Нижняя граница
+                
+                # Обновляем позицию точки
                 try:
                     if is_image:
                         self.canvas.coords(point_id, px, py)
@@ -3115,6 +3489,9 @@ class IDEF0App:
                         self.canvas.coords(point_id, px - size, py - size, px + size, py + size)
                 except tk.TclError:
                     pass
+            except (tk.TclError, ValueError, IndexError) as e:
+                print(f"Ошибка при обновлении точки прикрепления: {e}")
+                continue
     
     def hide_attachment_points(self):
         """Скрывает все точки прикрепления"""
@@ -3520,8 +3897,13 @@ class IDEF0App:
         cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
         cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
         
-        # Масштабируем все элементы
+        # Масштабируем все элементы (кроме маркеров, которые пересоздаются)
+        # Исключаем маркеры из масштабирования, чтобы они не дублировались
         self.canvas.scale("all", cx, cy, factor, factor)
+        
+        # Обновляем координаты модели блоков после масштабирования
+        # чтобы они соответствовали визуальным координатам на canvas
+        self._sync_block_model_coordinates()
         
         # Пересчёт границ прокрутки
         bbox = self.canvas.bbox("all")
@@ -3530,6 +3912,19 @@ class IDEF0App:
         
         # Обновляем масштаб и UI
         self.zoom_scale = scale
+        
+        # Обновляем маркеры изменения размера для выбранного блока
+        if self.selected_block:
+            self.delete_resize_handles(self.selected_block)
+            self.create_resize_handles(self.selected_block)
+            # Обновляем кнопки создания стрелок
+            self.delete_arrow_buttons(self.selected_block)
+            self.create_arrow_buttons(self.selected_block)
+        
+        # Обновляем точки прикрепления, если они отображаются
+        if hasattr(self, 'attachment_points') and self.attachment_points:
+            self.update_attachment_points()
+        
         percent = int(round(self.zoom_scale * 100))
         if hasattr(self, "zoom_entry"):
             try:
@@ -3543,6 +3938,35 @@ class IDEF0App:
         if hasattr(self, "footer_label"):
             base = "Диаграмма: Пример IDEF0 | Масштаб: "
             self.footer_label.config(text=f"{base}{percent}%")
+    
+    def _sync_block_model_coordinates(self):
+        """Синхронизирует координаты модели блоков с визуальными координатами на canvas"""
+        # Получаем блоки текущего уровня
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        current_block_ids = {block.id for block in current_blocks}
+        
+        for block_data in self.blocks:
+            if block_data["model"].id not in current_block_ids:
+                continue  # Пропускаем блоки не текущего уровня
+            
+            model = block_data["model"]
+            rect_id = block_data.get("rect_id")
+            
+            if rect_id:
+                try:
+                    # Получаем визуальные координаты блока с canvas
+                    coords = self.canvas.coords(rect_id)
+                    if len(coords) >= 4:
+                        visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                        # Обновляем только позицию модели на основе визуальных координат
+                        # Размеры остаются фиксированными в логических единицах (не зависят от масштаба)
+                        model.x = (visual_x1 + visual_x2) / 2
+                        model.y = (visual_y1 + visual_y2) / 2
+                        # НЕ обновляем width и height - они должны оставаться фиксированными
+                        # Визуальные размеры будут масштабироваться автоматически через canvas.scale
+                except (tk.TclError, IndexError):
+                    # Если не удалось получить координаты, оставляем как есть
+                    pass
     
     def apply_zoom(self, factor, anchor_screen=None):
         """Применяет масштабирование ко всем элементам canvas"""
@@ -3566,6 +3990,10 @@ class IDEF0App:
         # Масштабируем все элементы, включая сетку
         self.canvas.scale("all", cx, cy, norm_factor, norm_factor)
 
+        # Обновляем координаты модели блоков после масштабирования
+        # чтобы они соответствовали визуальным координатам на canvas
+        self._sync_block_model_coordinates()
+
         # Перерисовываем/обновляем элементы, чувствительные к масштабу
         # Текст в Tk не масштабируется шрифтом — оставляем как есть для простоты
 
@@ -3576,6 +4004,19 @@ class IDEF0App:
 
         # Обновляем текущий масштаб и UI
         self.zoom_scale = new_scale
+        
+        # Обновляем маркеры изменения размера для выбранного блока
+        if self.selected_block:
+            self.delete_resize_handles(self.selected_block)
+            self.create_resize_handles(self.selected_block)
+            # Обновляем кнопки создания стрелок
+            self.delete_arrow_buttons(self.selected_block)
+            self.create_arrow_buttons(self.selected_block)
+        
+        # Обновляем точки прикрепления, если они отображаются
+        if hasattr(self, 'attachment_points') and self.attachment_points:
+            self.update_attachment_points()
+        
         percent = int(round(self.zoom_scale * 100))
         if hasattr(self, "zoom_entry"):
             # Обновляем поле ввода, только если оно не в фокусе (чтобы не прерывать ввод)
@@ -3605,15 +4046,6 @@ class IDEF0App:
 
     def on_canvas_click(self, event):
         """Обработчик клика по холсту"""
-        # Режим "создать точку сгиба": следующий клик по холсту ставит bend-точку
-        if self.add_bend_mode and self.add_bend_arrow_data:
-            x = self.canvas.canvasx(event.x)
-            y = self.canvas.canvasy(event.y)
-            try:
-                self.set_arrow_bend_point(self.add_bend_arrow_data, x, y)
-            finally:
-                self._exit_add_bend_mode()
-            return "break"
         if self.is_panning:
             # Если включено панорамирование (пробел зажат), начинаем панорамирование
             self.canvas.scan_mark(event.x, event.y)
@@ -3685,6 +4117,7 @@ class IDEF0App:
                         width=prev_model.border_width
                     )
                     self.delete_resize_handles(self.selected_block)
+                    self.delete_arrow_buttons(self.selected_block)
                     self.selected_block = None
                     self.hide_block_action_buttons()
                 if self.selected_arrow:
@@ -3728,30 +4161,82 @@ class IDEF0App:
                 self.arrow_preview_line = None
             
             # Создаем стрелку
-            if self.arrow_start_block and end_block:
+            # Проверяем, была ли стрелка начата от кнопки
+            arrow_start_side = getattr(self, 'arrow_start_side', None)
+            arrow_target_block = getattr(self, 'arrow_target_block', None)
+            arrow_target_side = getattr(self, 'arrow_target_side', None)
+            
+            # Если стрелка создана от левой кнопки, она должна входить в целевой блок
+            if arrow_target_block and arrow_target_side and self.arrow_start_x is not None:
+                # Стрелка входа - начинается от точки (кнопки), входит в блок
+                # Если отпустили на другом блоке, создаем стрелку от точки к этому блоку
+                if end_block and end_block["id"] != arrow_target_block["id"]:
+                    # Стрелка от точки к другому блоку
+                    self.create_arrow_from_point_to_block(
+                        self.arrow_start_x, self.arrow_start_y,
+                        end_block["id"],
+                        to_side=None  # Определится автоматически
+                    )
+                else:
+                    # Стрелка от точки к целевому блоку (от кнопки)
+                    self.create_arrow_from_point_to_block(
+                        self.arrow_start_x, self.arrow_start_y,
+                        arrow_target_block["id"],
+                        to_side=arrow_target_side
+                    )
+            elif self.arrow_start_block and end_block:
                 # Стрелка от блока к блоку
                 if self.arrow_start_block["id"] != end_block["id"]:
-                    from_side, to_side = self._determine_arrow_sides(
-                        self.arrow_start_block["model"],
-                        end_block["model"]
-                    )
-                    self.create_arrow_between_blocks(
-                        self.arrow_start_block["id"],
-                        end_block["id"],
-                        from_side=from_side,
-                        to_side=to_side
-                    )
+                    if arrow_start_side == "left":
+                        # Стрелка входа - входит в целевой блок слева
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side="left",
+                            to_side="left"
+                        )
+                    elif arrow_start_side == "right":
+                        # Стрелка выхода - выходит из начального блока справа
+                        from_side, to_side = self._determine_arrow_sides(
+                            self.arrow_start_block["model"],
+                            end_block["model"]
+                        )
+                        # Принудительно устанавливаем from_side="right"
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side="right",
+                            to_side=to_side
+                        )
+                    else:
+                        # Обычная логика определения сторон
+                        from_side, to_side = self._determine_arrow_sides(
+                            self.arrow_start_block["model"],
+                            end_block["model"]
+                        )
+                        self.create_arrow_between_blocks(
+                            self.arrow_start_block["id"],
+                            end_block["id"],
+                            from_side=from_side,
+                            to_side=to_side
+                        )
             elif self.arrow_start_block:
                 # Стрелка от блока к точке
+                # Если стрелка создана от правой кнопки, она должна выходить из блока справа
+                from_side = "right" if arrow_start_side == "right" else None
                 self.create_arrow_from_block_to_point(
                     self.arrow_start_block["id"],
-                    x, y
+                    x, y,
+                    from_side=from_side
                 )
             elif end_block:
                 # Стрелка от точки к блоку
+                # Если стрелка создана от левой кнопки, она должна входить в блок слева
+                to_side = "left" if arrow_start_side == "left" else None
                 self.create_arrow_from_point_to_block(
                     self.arrow_start_x, self.arrow_start_y,
-                    end_block["id"]
+                    end_block["id"],
+                    to_side=to_side
                 )
             elif self.arrow_start_x is not None and self.arrow_start_y is not None:
                 # Стрелка от точки к точке
@@ -3764,7 +4249,13 @@ class IDEF0App:
             self.arrow_start_block = None
             self.arrow_start_x = None
             self.arrow_start_y = None
+            self.arrow_start_side = None
+            self.arrow_target_block = None
+            self.arrow_target_side = None
             self.arrow_drawing = False
+            
+            # Восстанавливаем кнопки, если они были скрыты
+            self._restore_arrow_buttons()
             
             # Переключаем режим на начальный (select) после создания стрелки
             self.enable_select_mode()
@@ -3791,17 +4282,22 @@ class IDEF0App:
             
             if self.arrow_start_block:
                 # Начало от блока
-                start_block = self.arrow_start_block["model"]
-                # Определяем сторону начального блока на основе направления к курсору
-                dx = x - start_block.x
-                dy = y - start_block.y
-                
-                if abs(dx) > abs(dy):
-                    from_side = "right" if dx > 0 else "left"
+                start_block_data = self.arrow_start_block
+                start_block_model = start_block_data["model"]
+                # Используем заданную сторону, если она есть, иначе определяем по направлению к курсору
+                if hasattr(self, 'arrow_start_side') and self.arrow_start_side:
+                    from_side = self.arrow_start_side
                 else:
-                    from_side = "bottom" if dy > 0 else "top"
+                    # Определяем сторону начального блока на основе направления к курсору
+                    dx = x - start_block_model.x
+                    dy = y - start_block_model.y
+                    
+                    if abs(dx) > abs(dy):
+                        from_side = "right" if dx > 0 else "left"
+                    else:
+                        from_side = "bottom" if dy > 0 else "top"
                 
-                start_x, start_y = self._get_block_side_point(start_block, from_side)
+                start_x, start_y = self._get_block_side_point(start_block_data, from_side)
             elif self.arrow_start_x is not None and self.arrow_start_y is not None:
                 # Начало от точки
                 start_x = self.arrow_start_x
@@ -3898,18 +4394,53 @@ class IDEF0App:
     def _get_block_side_point(self, block, side):
         """
         Получает точку на стороне блока (вспомогательный метод)
+        Использует визуальные координаты блока с canvas для правильной работы при масштабировании
         
         Args:
-            block: Модель блока
+            block: Модель блока или block_data
             side: Сторона ("left", "right", "top", "bottom")
             
         Returns:
             tuple: (x, y) координаты точки
         """
-        x = block.x
-        y = block.y
-        width = block.width
-        height = block.height
+        # Если передан block_data, получаем визуальные координаты с canvas
+        if isinstance(block, dict) and "rect_id" in block:
+            block_data = block
+            try:
+                rect_id = block_data.get("rect_id")
+                if rect_id:
+                    coords = self.canvas.coords(rect_id)
+                    if len(coords) >= 4:
+                        visual_x1, visual_y1, visual_x2, visual_y2 = coords[0], coords[1], coords[2], coords[3]
+                        visual_center_x = (visual_x1 + visual_x2) / 2
+                        visual_center_y = (visual_y1 + visual_y2) / 2
+                        visual_width = visual_x2 - visual_x1
+                        visual_height = visual_y2 - visual_y1
+                        
+                        if side == "left":
+                            return (visual_x1, visual_center_y)
+                        elif side == "right":
+                            return (visual_x2, visual_center_y)
+                        elif side == "top":
+                            return (visual_center_x, visual_y1)
+                        elif side == "bottom":
+                            return (visual_center_x, visual_y2)
+                        else:
+                            return (visual_center_x, visual_center_y)
+            except (tk.TclError, AttributeError, IndexError):
+                pass
+        
+        # Если передан model или не удалось получить визуальные координаты, используем логические
+        if hasattr(block, 'x'):
+            model = block
+        else:
+            # Если это block_data, получаем model
+            model = block.get("model") if isinstance(block, dict) else block
+        
+        x = model.x
+        y = model.y
+        width = model.width
+        height = model.height
         
         if side == "left":
             return (x - width / 2, y)
@@ -4463,13 +4994,6 @@ class IDEF0App:
         # Обновляем холст
         self.refresh_canvas()
         
-        # После переключения уровня возвращаемся в режим выбора:
-        # иначе пользователь может остаться в pan/draw_arrow и "клики по блокам" не будут выделять.
-        try:
-            self.enable_select_mode()
-        except Exception:
-            pass
-        
         # Восстанавливаем позицию прокрутки если есть сохраненное состояние
         state = self.layer_manager.get_level_state(level_key)
         if state:
@@ -4545,6 +5069,12 @@ class IDEF0App:
         block_data["rect_id"] = rect
         block_data["text_id"] = text
 
+        # Применяем текущий масштаб к блоку, если он не равен 1.0
+        if self.zoom_scale != 1.0:
+            cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+            cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+            self.canvas.scale(block_data["id"], cx, cy, self.zoom_scale, self.zoom_scale)
+
         # Делаем блок интерактивным
         self.make_block_interactive(block_data)
 
@@ -4610,21 +5140,28 @@ class IDEF0App:
         self.check_numbering_errors()
     
     def check_numbering_errors(self):
-        """Проверяет пропуски в нумерации блоков и показывает/скрывает индикатор ошибки"""
+        """Проверяет пропуски в нумерации блоков и валидацию стрелок, показывает/скрывает индикатор ошибки"""
         missing_codes = self._find_missing_codes()
+        blocks_without_arrows = self._find_blocks_without_arrows()
         
-        if missing_codes:
+        # Объединяем все ошибки
+        has_errors = missing_codes or blocks_without_arrows
+        
+        if has_errors:
             # Показываем индикатор ошибки
             if hasattr(self, 'error_indicator_canvas'):
                 self.error_indicator_canvas.place(relx=1, rely=1, x=-40, y=-30, anchor='se')
-                # Сохраняем список отсутствующих кодов для tooltip
+                # Сохраняем списки ошибок для tooltip
                 self.missing_codes = missing_codes
+                self.blocks_without_arrows = blocks_without_arrows
         else:
             # Скрываем индикатор ошибки
             if hasattr(self, 'error_indicator_canvas'):
                 self.error_indicator_canvas.place_forget()
                 if hasattr(self, 'missing_codes'):
                     self.missing_codes = []
+                if hasattr(self, 'blocks_without_arrows'):
+                    self.blocks_without_arrows = []
     
     def _find_missing_codes(self):
         """Находит пропуски в нумерации блоков"""
@@ -4762,9 +5299,54 @@ class IDEF0App:
         
         return ", ".join(result_parts)
     
+    def _find_blocks_without_arrows(self):
+        """Находит блоки, у которых отсутствуют стрелки слева или справа"""
+        blocks_without_arrows = []
+        
+        # Получаем блоки текущего уровня
+        current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+        
+        for block in current_blocks:
+            block_id = block.id
+            has_left_arrow = False
+            has_right_arrow = False
+            
+            # Проверяем все стрелки, связанные с этим блоком
+            for arrow_data in self.arrows:
+                arrow = arrow_data["arrow"]
+                
+                # Проверяем, входит ли стрелка слева (to_side="left") - это вход
+                if arrow.to_block_id == block_id and arrow.to_side == "left":
+                    has_left_arrow = True
+                
+                # Проверяем, выходит ли стрелка справа (from_side="right") - это выход
+                if arrow.from_block_id == block_id and arrow.from_side == "right":
+                    has_right_arrow = True
+                
+                # Если обе стрелки найдены, можно прекратить проверку для этого блока
+                if has_left_arrow and has_right_arrow:
+                    break
+            
+            # Если отсутствует хотя бы одна стрелка, добавляем блок в список
+            if not has_left_arrow or not has_right_arrow:
+                missing_sides = []
+                if not has_left_arrow:
+                    missing_sides.append("вход")
+                if not has_right_arrow:
+                    missing_sides.append("выход")
+                blocks_without_arrows.append({
+                    "block": block,
+                    "missing_sides": missing_sides
+                })
+        
+        return blocks_without_arrows
+    
     def _show_error_tooltip(self, event):
         """Показывает tooltip с информацией об ошибке"""
-        if not hasattr(self, 'missing_codes') or not self.missing_codes:
+        missing_codes = getattr(self, 'missing_codes', [])
+        blocks_without_arrows = getattr(self, 'blocks_without_arrows', [])
+        
+        if not missing_codes and not blocks_without_arrows:
             return
         
         # Создаем tooltip окно
@@ -4773,10 +5355,28 @@ class IDEF0App:
         self.error_tooltip.wm_attributes("-topmost", True)
         
         # Формируем текст ошибки
-        if len(self.missing_codes) == 1:
-            error_text = f"Не хватает элемента {self.missing_codes[0]}"
-        else:
-            error_text = f"Не хватает элементов: {', '.join(self.missing_codes)}"
+        error_parts = []
+        
+        if missing_codes:
+            if len(missing_codes) == 1:
+                error_parts.append(f"Не хватает элемента {missing_codes[0]}")
+            else:
+                error_parts.append(f"Не хватает элементов: {', '.join(missing_codes)}")
+        
+        if blocks_without_arrows:
+            block_errors = []
+            for item in blocks_without_arrows:
+                block = item["block"]
+                missing_sides = item["missing_sides"]
+                sides_text = " и ".join(missing_sides)
+                block_errors.append(f"{block.code} ({sides_text})")
+            
+            if len(block_errors) == 1:
+                error_parts.append(f"Блок без входа\\выхода: {block_errors[0]}")
+            else:
+                error_parts.append(f"Блоки без входа\\выхода: {', '.join(block_errors)}")
+        
+        error_text = "\n".join(error_parts)
         
         label = tk.Label(
             self.error_tooltip,
@@ -4787,7 +5387,8 @@ class IDEF0App:
             relief="solid",
             borderwidth=1,
             padx=8,
-            pady=4
+            pady=4,
+            justify="left"
         )
         label.pack()
         
@@ -4888,111 +5489,6 @@ class IDEF0App:
                 print(f"    Блок: {b['id']}")
             return  # Нельзя нарисовать стрелку без координат
         
-        # Получаем список всех блоков для проверки пересечений
-        all_blocks = [b["model"] for b in self.blocks]
-        
-        def _dedupe_consecutive(points):
-            if not points:
-                return points
-            out = [points[0]]
-            for p in points[1:]:
-                if p != out[-1]:
-                    out.append(p)
-            return out
-        
-        def _coerce_path(path):
-            """locked_path хранится как [[x,y],...]; приводим к [(x,y),...]"""
-            if not path:
-                return None
-            out = []
-            for p in path:
-                try:
-                    out.append((float(p[0]), float(p[1])))
-                except Exception:
-                    return None
-            return out
-        
-        def _apply_locked_endpoints(path, new_start, new_end):
-            """
-            Подтягиваем начало/конец к новым точкам, сохраняя внутренние колена.
-            Важно: НЕ двигаем внутренние точки (чтобы attach не "сбрасывал" авто-колена),
-            а при необходимости добавляем по одному дополнительному колену у начала/конца.
-            """
-            if not path or len(path) < 2:
-                return [new_start, new_end]
-            if len(path) == 2:
-                return [new_start, new_end]
-            
-            old0 = path[0]
-            old1 = path[1]
-            oldn_1 = path[-2]
-            oldn = path[-1]
-            
-            inner = list(path[1:-1])
-            if not inner:
-                return [new_start, new_end]
-            
-            out = [new_start]
-            
-            # Старт: соединяем new_start с первой внутренней точкой, не трогая её.
-            first = inner[0]
-            if new_start != first:
-                if new_start[0] != first[0] and new_start[1] != first[1]:
-                    # Ориентация старого первого сегмента (old start -> old1)
-                    dx0 = abs(old0[0] - old1[0])
-                    dy0 = abs(old0[1] - old1[1])
-                    if dx0 < dy0:
-                        # старый сегмент был "вертикальный" → последний подлёт к first делаем вертикальным (x = new_start.x)
-                        out.append((new_start[0], first[1]))
-                    else:
-                        # старый сегмент был "горизонтальный" → последний подлёт к first делаем горизонтальным (y = new_start.y)
-                        out.append((first[0], new_start[1]))
-                out.append(first)
-            else:
-                out.append(first)
-            
-            # Внутренние точки сохраняем как есть
-            if len(inner) > 1:
-                out.extend(inner[1:])
-            
-            # Конец: соединяем последнюю внутреннюю точку с new_end, не трогая внутреннюю.
-            last = out[-1]
-            if last != new_end:
-                if last[0] != new_end[0] and last[1] != new_end[1]:
-                    dx1 = abs(oldn_1[0] - oldn[0])
-                    dy1 = abs(oldn_1[1] - oldn[1])
-                    if dx1 < dy1:
-                        # старый последний сегмент был вертикальный → подлёт к new_end делаем вертикальным (x = new_end.x)
-                        out.append((new_end[0], last[1]))
-                    else:
-                        # старый последний сегмент был горизонтальный → подлёт к new_end делаем горизонтальным (y = new_end.y)
-                        out.append((last[0], new_end[1]))
-                out.append(new_end)
-            
-            return _dedupe_consecutive(out)
-        
-        # Вычисляем путь (обычный авто-роутинг или замороженный)
-        routing_path = None
-        if getattr(arrow, "route_locked", False) and getattr(arrow, "locked_path", None):
-            base = _coerce_path(arrow.locked_path)
-            if base and len(base) >= 2:
-                routing_path = _apply_locked_endpoints(base, (x1, y1), (x2, y2))
-                # Обновляем замороженный путь текущими координатами (для сохранения/undo)
-                arrow.locked_path = [[p[0], p[1]] for p in routing_path]
-            else:
-                # Некорректный формат — сбрасываем
-                arrow.route_locked = False
-                arrow.locked_path = None
-        
-        if not routing_path:
-            routing_path = arrow.calculate_routing_path(from_block, to_block, all_blocks)
-        # Сохраняем путь для позиционирования ручки изгиба и прочих UI-элементов
-        arrow_data["routing_path"] = routing_path
-        
-        if len(routing_path) < 2:
-            print(f"Ошибка: Путь обхода содержит менее 2 точек для стрелки {arrow.id}")
-            return
-        
         # Определяем стиль линии
         dash = None
         if arrow.style == "dashed":
@@ -5017,49 +5513,82 @@ class IDEF0App:
         # Используем цвет стрелки (если он не установлен, используем цвет из темы)
         arrow_color = arrow.color if arrow.color and arrow.color != Colors.ARROW_COLOR else Colors.ARROW_COLOR
         
-        # Преобразуем путь в список координат для canvas.create_line
-        line_points = []
-        for point in routing_path:
-            line_points.extend([point[0], point[1]])
-        
-        # Рисуем стрелку по вычисленному пути (без сглаживания для углов 90 градусов)
-        line_id = self.canvas.create_line(
-            *line_points,
-            fill=arrow_color,
-            width=line_width,
-            dash=dash,
-            capstyle="round",
-            joinstyle="miter",  # Острые углы для 90 градусов
-            tags=("arrow_line", arrow.id)
-        )
+        # Рисуем стрелку с сглаживанием для устранения "лесенки"
+        # Всегда рисуем прямую стрелку - добавляем промежуточные точки для сглаживания
+        dx = x2 - x1
+        dy = y2 - y1
+        length = math.sqrt(dx * dx + dy * dy)
+            
+        # Если стрелка достаточно длинная, добавляем промежуточные точки
+        if length > 10:
+            # Добавляем несколько промежуточных точек для плавности
+            num_points = max(3, int(length / 20))  # Одна точка на каждые 20 пикселей
+            points = []
+            for i in range(num_points + 1):
+                t = i / num_points
+                px = x1 + dx * t
+                py = y1 + dy * t
+                points.extend([px, py])
+            
+            line_id = self.canvas.create_line(
+                *points,
+                fill=arrow_color,
+                width=line_width,
+                dash=dash,
+                capstyle="round",  # Круглые концы для плавности
+                joinstyle="round",  # Круглые соединения
+                smooth=True,  # Включаем сглаживание для плавной линии
+                tags=("arrow_line", arrow.id)
+            )
+        else:
+            # Для коротких стрелок используем простую линию
+            line_id = self.canvas.create_line(
+                x1, y1, x2, y2,
+                fill=arrow_color,
+                width=line_width,
+                dash=dash,
+                capstyle="round",  # Круглые концы для плавности
+                joinstyle="round",  # Круглые соединения
+                tags=("arrow_line", arrow.id)
+            )
         arrow_data["line_id"] = line_id
         
         # Создаем невидимую широкую линию для увеличения хитбокса (для удобного захвата)
         hitbox_width = 20  # Ширина области клика
-        hitbox_id = self.canvas.create_line(
-            *line_points,
-            fill="",  # Прозрачный цвет
-            width=hitbox_width,
-            dash=dash,
-            capstyle="round",
-            joinstyle="miter",
-            tags=("arrow_line", "arrow_hitbox", arrow.id),
-            state="normal"  # Убеждаемся, что линия активна для клика
-        )
-        arrow_data["hitbox_id"] = hitbox_id
-        
-        # Определяем координаты для наконечника стрелки
-        # Используем последние две точки пути для правильного направления наконечника
-        if len(routing_path) >= 2:
-            arrow_start_x, arrow_start_y = routing_path[-2]
-            arrow_end_x, arrow_end_y = routing_path[-1]
+        # Используем пустой fill для полной прозрачности
+        if length > 10:
+            # Используем те же промежуточные точки для хитбокса
+            num_points = max(3, int(length / 20))
+            points = []
+            for i in range(num_points + 1):
+                t = i / num_points
+                px = x1 + dx * t
+                py = y1 + dy * t
+                points.extend([px, py])
+            
+            hitbox_id = self.canvas.create_line(
+                *points,
+                fill="",  # Прозрачный цвет
+                width=hitbox_width,
+                dash=dash,
+                capstyle="round",
+                joinstyle="round",
+                smooth=True,
+                tags=("arrow_line", "arrow_hitbox", arrow.id),
+                state="normal"  # Убеждаемся, что линия активна для клика
+            )
         else:
-            arrow_start_x, arrow_start_y = routing_path[0]
-            arrow_end_x, arrow_end_y = routing_path[-1]
-        
-        # Для текста используем первую и последнюю точки пути
-        x1, y1 = routing_path[0]
-        x2, y2 = routing_path[-1]
+            hitbox_id = self.canvas.create_line(
+                x1, y1, x2, y2,
+                fill="",  # Прозрачный цвет
+                width=hitbox_width,
+                dash=dash,
+                capstyle="round",
+                joinstyle="round",
+                tags=("arrow_line", "arrow_hitbox", arrow.id),
+                state="normal"  # Убеждаемся, что линия активна для клика
+            )
+        arrow_data["hitbox_id"] = hitbox_id
         
         # Удаляем старый наконечник, если существует
         if arrow_data.get("arrowhead_id"):
@@ -5068,8 +5597,8 @@ class IDEF0App:
             except tk.TclError:
                 pass  # Элемент уже удален
         
-        # Рисуем наконечник стрелки (направлен по последнему сегменту пути)
-        arrowhead_id = self.create_arrowhead(arrow_start_x, arrow_start_y, arrow_end_x, arrow_end_y, arrow_color, arrow.width)
+        # Рисуем наконечник стрелки
+        arrowhead_id = self.create_arrowhead(x1, y1, x2, y2, arrow_color, arrow.width)
         arrow_data["arrowhead_id"] = arrowhead_id
         
         # Сохраняем ID для обновления
@@ -5294,6 +5823,12 @@ class IDEF0App:
             print(f"Ошибка: Блок {to_block_id} не найден!")
             return None
         
+        # Удаляем кнопки от соответствующих сторон блоков, если стрелка создается вручную
+        if from_block_data and from_side in ["left", "right"]:
+            self.delete_arrow_button(from_block_data, from_side)
+        if to_block_data and to_side in ["left", "right"]:
+            self.delete_arrow_button(to_block_data, to_side)
+        
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
@@ -5318,10 +5853,13 @@ class IDEF0App:
         # Рисуем стрелку
         self.draw_arrow(arrow_data)
         
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от {from_block_id} к {to_block_id}")
         return arrow_data
     
-    def create_arrow_from_block_to_point(self, from_block_id, x, y):
+    def create_arrow_from_block_to_point(self, from_block_id, x, y, from_side=None):
         """Создает стрелку от блока к точке на холсте"""
         from_block_data = next((b for b in self.blocks if b["id"] == from_block_id), None)
         if from_block_data is None:
@@ -5331,15 +5869,20 @@ class IDEF0App:
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
-        # Определяем сторону блока на основе направления к точке
-        from_block = from_block_data["model"]
-        dx = x - from_block.x
-        dy = y - from_block.y
+        # Определяем сторону блока на основе направления к точке, если не указана явно
+        if from_side is None:
+            from_block = from_block_data["model"]
+            dx = x - from_block.x
+            dy = y - from_block.y
+            
+            if abs(dx) > abs(dy):
+                from_side = "right" if dx > 0 else "left"
+            else:
+                from_side = "bottom" if dy > 0 else "top"
         
-        if abs(dx) > abs(dy):
-            from_side = "right" if dx > 0 else "left"
-        else:
-            from_side = "bottom" if dy > 0 else "top"
+        # Удаляем кнопку от соответствующей стороны блока, если стрелка создается вручную
+        if from_side in ["left", "right"]:
+            self.delete_arrow_button(from_block_data, from_side)
         
         arrow = Arrow(
             arrow_id=arrow_id,
@@ -5360,10 +5903,14 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от блока {from_block_id} к точке ({x:.1f}, {y:.1f})")
         return arrow_data
     
-    def create_arrow_from_point_to_block(self, x, y, to_block_id):
+    def create_arrow_from_point_to_block(self, x, y, to_block_id, to_side=None):
         """Создает стрелку от точки на холсте к блоку"""
         to_block_data = next((b for b in self.blocks if b["id"] == to_block_id), None)
         if to_block_data is None:
@@ -5373,15 +5920,20 @@ class IDEF0App:
         arrow_id = f"arrow_{self.next_arrow_id}"
         self.next_arrow_id += 1
         
-        # Определяем сторону блока на основе направления от точки
-        to_block = to_block_data["model"]
-        dx = to_block.x - x
-        dy = to_block.y - y
+        # Определяем сторону блока на основе направления от точки, если не указана явно
+        if to_side is None:
+            to_block = to_block_data["model"]
+            dx = to_block.x - x
+            dy = to_block.y - y
+            
+            if abs(dx) > abs(dy):
+                to_side = "left" if dx > 0 else "right"
+            else:
+                to_side = "top" if dy > 0 else "bottom"
         
-        if abs(dx) > abs(dy):
-            to_side = "left" if dx > 0 else "right"
-        else:
-            to_side = "top" if dy > 0 else "bottom"
+        # Удаляем кнопку к соответствующей стороне блока, если стрелка создается вручную
+        if to_side in ["left", "right"]:
+            self.delete_arrow_button(to_block_data, to_side)
         
         arrow = Arrow(
             arrow_id=arrow_id,
@@ -5402,6 +5954,10 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от точки ({x:.1f}, {y:.1f}) к блоку {to_block_id}")
         return arrow_data
     
@@ -5431,6 +5987,10 @@ class IDEF0App:
         
         self.arrows.append(arrow_data)
         self.draw_arrow(arrow_data)
+        
+        # Проверяем ошибки валидации после добавления стрелки
+        self.check_numbering_errors()
+        
         print(f"Создана стрелка {arrow_id} от точки ({x1:.1f}, {y1:.1f}) к точке ({x2:.1f}, {y2:.1f})")
         return arrow_data
     
@@ -5478,6 +6038,9 @@ class IDEF0App:
                     pass
         if arrow_data in self.arrows:
             self.arrows.remove(arrow_data)
+        
+        # Проверяем ошибки валидации после удаления стрелки
+        self.check_numbering_errors()
     
     def save_state(self):
         """Сохраняет текущее состояние для undo/redo"""
@@ -5525,8 +6088,6 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
-                "route_locked": getattr(arrow, "route_locked", False),
-                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
@@ -5602,9 +6163,7 @@ class IDEF0App:
                 y1=arrow_dict["y1"],
                 x2=arrow_dict["x2"],
                 y2=arrow_dict["y2"],
-                text=arrow_dict.get("text", ""),
-                route_locked=arrow_dict.get("route_locked", False),
-                locked_path=arrow_dict.get("locked_path")
+                text=arrow_dict.get("text", "")
             )
             arrow.from_attachment_point = arrow_dict.get("from_attachment_point")
             arrow.to_attachment_point = arrow_dict.get("to_attachment_point")
@@ -5620,6 +6179,9 @@ class IDEF0App:
         
         # Обновляем панель свойств
         self.properties_panel.update_properties(None)
+        
+        # Проверяем ошибки валидации после восстановления состояния
+        self.check_numbering_errors()
     
     def undo(self):
         """Отменяет последнее действие"""
@@ -5712,8 +6274,6 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
-                "route_locked": getattr(arrow, "route_locked", False),
-                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else ""
             })
         
@@ -5784,6 +6344,91 @@ class IDEF0App:
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
     
+    def export_to_png(self):
+        """Экспортирует текущий canvas в PNG файл"""
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".png",
+            filetypes=[("PNG files", "*.png"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+        
+        try:
+            # Получаем scrollregion для определения полного размера canvas
+            scrollregion = self.canvas.cget("scrollregion")
+            if not scrollregion:
+                messagebox.showerror("Ошибка", "Не удалось определить размеры canvas для экспорта")
+                return
+            
+            srl = scrollregion.split()
+            if len(srl) < 4:
+                messagebox.showerror("Ошибка", "Не удалось определить размеры canvas для экспорта")
+                return
+            
+            min_x, min_y, max_x, max_y = float(srl[0]), float(srl[1]), float(srl[2]), float(srl[3])
+            canvas_width = int(max_x - min_x)
+            canvas_height = int(max_y - min_y)
+            
+            if canvas_width <= 0 or canvas_height <= 0:
+                messagebox.showerror("Ошибка", "Неверные размеры canvas для экспорта")
+                return
+            
+            # Используем временный EPS файл (PostScript)
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            ps_file = os.path.join(temp_dir, f"canvas_export_{os.getpid()}.eps")
+            
+            try:
+                # Экспортируем canvas в EPS (PostScript)
+                self.canvas.postscript(
+                    file=ps_file,
+                    colormode='color',
+                    width=canvas_width,
+                    height=canvas_height,
+                    x=min_x,
+                    y=min_y,
+                    pagewidth=canvas_width,
+                    pageheight=canvas_height
+                )
+                
+                # Пытаемся открыть EPS через PIL
+                # PIL может не поддерживать EPS напрямую, поэтому используем альтернативный метод
+                try:
+                    # Пробуем открыть как EPS
+                    img = Image.open(ps_file)
+                    if img.mode != 'RGB':
+                        img = img.convert('RGB')
+                    img.save(file_path, 'PNG')
+                except Exception as e1:
+                    # Если PIL не может открыть EPS, используем альтернативный метод
+                    print(f"PIL не может открыть EPS напрямую: {e1}")
+                    # Используем метод через ImageGrab для захвата видимой области
+                    # Получаем координаты canvas на экране
+                    self.canvas.update_idletasks()
+                    x = self.canvas.winfo_rootx()
+                    y = self.canvas.winfo_rooty()
+                    width = self.canvas.winfo_width()
+                    height = self.canvas.winfo_height()
+                    
+                    # Захватываем видимую область
+                    img = ImageGrab.grab(bbox=(x, y, x + width, y + height))
+                    img.save(file_path, 'PNG')
+                    print(f"Экспортировано через ImageGrab: {width}x{height} (только видимая область)")
+                
+                messagebox.showinfo("Экспорт", "Изображение успешно экспортировано в PNG!")
+            finally:
+                # Удаляем временный файл
+                try:
+                    if os.path.exists(ps_file):
+                        os.remove(ps_file)
+                except:
+                    pass
+                    
+        except Exception as e:
+            import traceback
+            error_msg = f"Не удалось экспортировать изображение:\n{str(e)}\n\n{traceback.format_exc()}"
+            messagebox.showerror("Ошибка", error_msg)
+    
     def open_file(self):
         """Открывает файл"""
         file_path = filedialog.askopenfilename(
@@ -5804,18 +6449,566 @@ class IDEF0App:
                 # Обновляем canvas для текущего уровня (показываем только корневой уровень)
                 self.refresh_canvas()
                 
-                # Гарантируем режим выбора после загрузки проекта
-                self.enable_select_mode()
-                self.canvas.focus_set()
-                
                 # Обновляем интерфейс
                 self.update_footer_info()
                 if self.layers_panel_visible:
                     self.update_layers_tree()
                 
+                # Проверяем ошибки валидации после загрузки файла
+                self.check_numbering_errors()
+                
                 messagebox.showinfo("Открытие", "Файл успешно открыт!")
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось открыть файл:\n{str(e)}")
+    
+    def import_layers(self):
+        """Открывает диалог выбора файла проекта и показывает список слоев для импорта"""
+        file_path = filedialog.askopenfilename(
+            title="Выберите файл проекта для импорта",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+        if not file_path:
+            return
+        
+        try:
+            # Читаем файл проекта
+            with open(file_path, 'r', encoding='utf-8') as f:
+                project_data = json.load(f)
+            
+            # Извлекаем слои из проекта
+            layers = self._extract_layers_from_project(project_data)
+            
+            if not layers:
+                messagebox.showinfo("Импорт", "В выбранном проекте не найдено слоев для импорта.")
+                return
+            
+            # Показываем окно выбора слоев
+            self._show_import_layers_dialog(layers, project_data)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось прочитать файл проекта:\n{str(e)}")
+    
+    def _extract_layers_from_project(self, project_data):
+        """Извлекает список слоев из данных проекта"""
+        blocks_data = project_data.get("blocks", [])
+        if not blocks_data:
+            return []
+        
+        # Строим дерево иерархии
+        blocks_dict = {block["id"]: block for block in blocks_data}
+        
+        def build_layer_tree(parent_id=None, level=0, path=[]):
+            """Рекурсивно строит дерево слоев"""
+            layers = []
+            for block in blocks_data:
+                if block.get("parent_id") == parent_id:
+                    block_id = block["id"]
+                    block_code = block.get("code", "?")
+                    block_name = block.get("name", "Без названия")
+                    
+                    # Формируем путь слоя
+                    layer_path = path + [block_id]
+                    path_str = " -> ".join([blocks_dict.get(bid, {}).get("code", "?") for bid in layer_path])
+                    if not path_str:
+                        path_str = "Корневой уровень"
+                    
+                    # Информация о слое
+                    layer_info = {
+                        "block_id": block_id,
+                        "block_code": block_code,
+                        "block_name": block_name,
+                        "level": level,
+                        "path": layer_path,
+                        "path_str": path_str,
+                        "parent_id": parent_id
+                    }
+                    layers.append(layer_info)
+                    
+                    # Рекурсивно получаем дочерние слои
+                    children = build_layer_tree(block_id, level + 1, layer_path)
+                    layers.extend(children)
+            
+            return layers
+        
+        # Начинаем с корневого уровня (блоки без parent_id)
+        root_layers = build_layer_tree(None, 0, [])
+        
+        # Добавляем корневой уровень, если есть блоки
+        if blocks_data:
+            root_blocks = [b for b in blocks_data if b.get("parent_id") is None]
+            if root_blocks:
+                root_layer = {
+                    "block_id": None,
+                    "block_code": "Корневой",
+                    "block_name": "Корневой уровень",
+                    "level": 0,
+                    "path": [],
+                    "path_str": "Корневой уровень",
+                    "parent_id": None
+                }
+                root_layers.insert(0, root_layer)
+        
+        return root_layers
+    
+    def _show_import_layers_dialog(self, layers, project_data):
+        """Показывает диалог выбора слоев для импорта"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Импорт слоев")
+        dialog.geometry("600x500")
+        dialog.configure(bg=Colors.SURFACE)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Заголовок
+        header_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        header_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        title_label = tk.Label(
+            header_frame,
+            text="Выберите слой для импорта:",
+            font=Fonts.SECTION,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY
+        )
+        title_label.pack(side=tk.LEFT)
+        
+        # Фрейм со списком
+        list_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # Scrollbar
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Listbox
+        listbox = tk.Listbox(
+            list_frame,
+            font=("Segoe UI", 10),
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            selectbackground=Colors.PRIMARY,
+            selectforeground="#ffffff",
+            yscrollcommand=scrollbar.set,
+            borderwidth=1,
+            relief="solid"
+        )
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        
+        # Заполняем список слоями
+        for layer in layers:
+            indent = "  " * layer["level"]
+            display_text = f"{indent}{layer['path_str']} - {layer['block_name']}"
+            listbox.insert(tk.END, display_text)
+        
+        # Обработчик двойного клика
+        def on_double_click(event):
+            selection = listbox.curselection()
+            if selection:
+                index = selection[0]
+                selected_layer = layers[index]
+                self._import_layer(selected_layer, project_data)
+                dialog.destroy()
+        
+        listbox.bind("<Double-Button-1>", on_double_click)
+        
+        # Кнопки
+        button_frame = tk.Frame(dialog, bg=Colors.SURFACE)
+        button_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        cancel_btn = tk.Button(
+            button_frame,
+            text="Отмена",
+            command=dialog.destroy,
+            bg=Colors.SURFACE,
+            fg=Colors.TEXT_PRIMARY,
+            font=Fonts.BODY,
+            relief="solid",
+            borderwidth=1,
+            padx=20,
+            pady=5
+        )
+        cancel_btn.pack(side=tk.RIGHT, padx=5)
+        
+        import_btn = tk.Button(
+            button_frame,
+            text="Импортировать",
+            command=lambda: self._import_selected_layer(listbox, layers, project_data, dialog),
+            bg=Colors.PRIMARY,
+            fg="#ffffff",
+            font=Fonts.BODY,
+            relief="solid",
+            borderwidth=1,
+            padx=20,
+            pady=5
+        )
+        import_btn.pack(side=tk.RIGHT, padx=5)
+    
+    def _import_selected_layer(self, listbox, layers, project_data, dialog):
+        """Импортирует выбранный слой"""
+        selection = listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Предупреждение", "Выберите слой для импорта.")
+            return
+        
+        index = selection[0]
+        selected_layer = layers[index]
+        self._import_layer(selected_layer, project_data)
+        dialog.destroy()
+    
+    def _import_layer(self, layer_info, project_data):
+        """Импортирует указанный слой в текущий проект"""
+        try:
+            self.save_state()  # Сохраняем состояние для undo
+            
+            blocks_data = project_data.get("blocks", [])
+            arrows_data = project_data.get("arrows", [])
+            
+            # Определяем, какие блоки и стрелки принадлежат выбранному слою
+            layer_path = layer_info["path"]
+            parent_id = layer_info["parent_id"]
+            
+            # Получаем все блоки слоя
+            if parent_id is None:
+                # Корневой уровень - все блоки без parent_id
+                layer_blocks = [b for b in blocks_data if b.get("parent_id") is None]
+            else:
+                # Уровень детализации - блоки с parent_id = последнему в пути
+                layer_blocks = [b for b in blocks_data if b.get("parent_id") == parent_id]
+            
+            if not layer_blocks:
+                messagebox.showwarning("Предупреждение", "Выбранный слой не содержит блоков.")
+                return
+            
+            # Получаем ID только блоков выбранного слоя (БЕЗ дочерних блоков)
+            layer_block_ids = {block["id"] for block in layer_blocks}
+            
+            # Получаем стрелки, которые связывают ТОЛЬКО блоки выбранного слоя между собой
+            # (не включаем стрелки, которые идут к дочерним блокам или от них)
+            layer_arrows = []
+            for arrow in arrows_data:
+                from_id = arrow.get("from_block_id")
+                to_id = arrow.get("to_block_id")
+                # Импортируем стрелку только если оба блока принадлежат выбранному слою
+                # (или если стрелка идет от/к точке, но один из блоков в слое)
+                if from_id and to_id:
+                    # Стрелка между двумя блоками - оба должны быть в слое
+                    if from_id in layer_block_ids and to_id in layer_block_ids:
+                        layer_arrows.append(arrow)
+                elif from_id and from_id in layer_block_ids:
+                    # Стрелка от блока к точке - блок должен быть в слое
+                    layer_arrows.append(arrow)
+                elif to_id and to_id in layer_block_ids:
+                    # Стрелка от точки к блоку - блок должен быть в слое
+                    layer_arrows.append(arrow)
+            
+            # Импортируем блоки
+            imported_blocks = []
+            block_id_mapping = {}  # Старый ID -> Новый ID
+            
+            for block_data in layer_blocks:
+                # Генерируем новый ID
+                new_block_id = f"block_{self.next_block_id}"
+                self.next_block_id += 1
+                old_block_id = block_data["id"]
+                block_id_mapping[old_block_id] = new_block_id
+                
+                # Генерируем новый код
+                parent_id_current = self.layer_manager.get_current_parent_id()
+                current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                
+                # Генерируем уникальный код
+                if parent_id_current:
+                    parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id_current), None)
+                    if parent_block:
+                        sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id_current]
+                        used_numbers = set()
+                        for bd in sibling_blocks:
+                            code_parts = bd["model"].code.split(".")
+                            if len(code_parts) > 1:
+                                try:
+                                    num = int(code_parts[-1])
+                                    used_numbers.add(num)
+                                except ValueError:
+                                    pass
+                        code_num = 1
+                        while code_num in used_numbers:
+                            code_num += 1
+                        code = f"{parent_block.code}.{code_num}"
+                    else:
+                        code = f"A{self.next_block_id}"
+                else:
+                    used_numbers = set()
+                    for bd in current_blocks_models:
+                        code = bd.code
+                        if code.startswith("A") and "." not in code:
+                            try:
+                                num = int(code[1:])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    code = f"A{code_num}"
+                
+                # Создаем новый блок
+                # ВАЖНО: При импорте слоя все блоки размещаются на текущем уровне проекта
+                # Убираем информацию о дочерних блоках - импортируем только выбранный слой
+                new_block = Block(
+                    block_id=new_block_id,
+                    name=block_data.get("name", "Блок")[:80],
+                    code=code,
+                    element_type=block_data.get("element_type", "Выберите тип..."),
+                    description=block_data.get("description", ""),
+                    x=block_data.get("x", 150),
+                    y=block_data.get("y", 150),
+                    width=block_data.get("width", 150),
+                    height=block_data.get("height", 50),
+                    color=block_data.get("color"),
+                    border_width=block_data.get("border_width", 2),
+                    parent_id=parent_id_current  # Привязываем к текущему уровню проекта (не сохраняем исходную иерархию)
+                )
+                
+                # Создаем визуальное представление
+                x = new_block.x
+                y = new_block.y
+                width = new_block.width
+                height = new_block.height
+                
+                rect = self.canvas.create_rectangle(
+                    x - width / 2, y - height / 2,
+                    x + width / 2, y + height / 2,
+                    fill=new_block.color,
+                    outline=Colors.BLOCK_BORDER,
+                    width=new_block.border_width,
+                    tags=("block", new_block_id)
+                )
+                
+                formatted_text = self.format_block_text(new_block.name, width)
+                text = self.canvas.create_text(
+                    x, y,
+                    text=formatted_text,
+                    font=("Segoe UI", 10),
+                    fill=Colors.TEXT_PRIMARY,
+                    justify="center",
+                    width=width - 10,
+                    tags=("block_text", new_block_id)
+                )
+                
+                block_data_obj = {
+                    "id": new_block_id,
+                    "model": new_block,
+                    "rect_id": rect,
+                    "text_id": text,
+                    "resize_handles": {}
+                }
+                
+                self.blocks.append(block_data_obj)
+                
+                # Применяем масштаб ПОСЛЕ добавления в список, но ДО make_block_interactive
+                # чтобы обработчики событий привязывались к уже масштабированным элементам
+                if self.zoom_scale != 1.0:
+                    cx = self.canvas.canvasx(self.canvas.winfo_width() // 2)
+                    cy = self.canvas.canvasy(self.canvas.winfo_height() // 2)
+                    self.canvas.scale(new_block_id, cx, cy, self.zoom_scale, self.zoom_scale)
+                
+                # Проверяем, что rect_id и text_id все еще существуют после масштабирования
+                try:
+                    # Проверяем существование элементов
+                    rect_coords = self.canvas.coords(block_data_obj["rect_id"])
+                    text_coords = self.canvas.coords(block_data_obj["text_id"])
+                    if not rect_coords or not text_coords:
+                        print(f"ОШИБКА: Элементы блока {new_block_id} не имеют координат после масштабирования")
+                    else:
+                        print(f"Блок {new_block_id}: rect_id={block_data_obj['rect_id']}, text_id={block_data_obj['text_id']} существуют после масштабирования, coords={rect_coords}")
+                except tk.TclError as e:
+                    print(f"ОШИБКА: Элементы блока {new_block_id} не существуют после масштабирования: {e}")
+                    # Пытаемся найти элементы по тегам
+                    try:
+                        items = self.canvas.find_withtag(new_block_id)
+                        print(f"Найдено элементов с тегом {new_block_id}: {items}")
+                        if len(items) >= 2:
+                            # Обновляем rect_id и text_id
+                            block_data_obj["rect_id"] = items[0] if items[0] else block_data_obj["rect_id"]
+                            block_data_obj["text_id"] = items[1] if items[1] else block_data_obj["text_id"]
+                            print(f"Обновлены ID элементов: rect_id={block_data_obj['rect_id']}, text_id={block_data_obj['text_id']}")
+                    except tk.TclError:
+                        pass
+                
+                # Делаем блок интерактивным ПОСЛЕ применения масштаба
+                # Важно: make_block_interactive должен вызываться после масштабирования
+                # чтобы обработчики событий привязывались к правильным элементам
+                self.make_block_interactive(block_data_obj)
+                
+                # Убеждаемся, что блок виден на canvas и находится поверх других элементов
+                try:
+                    # Поднимаем блоки наверх, чтобы они были видны и кликабельны
+                    self.canvas.tag_raise(block_data_obj["rect_id"], "all")
+                    self.canvas.tag_raise(block_data_obj["text_id"], "all")
+                    # Также поднимаем по тегу блока
+                    self.canvas.tag_raise(block_data_obj["id"], "all")
+                    print(f"Блок {new_block_id} поднят наверх canvas")
+                except tk.TclError as e:
+                    print(f"Ошибка при поднятии блока {new_block_id}: {e}")
+                
+                imported_blocks.append(block_data_obj)
+                # Отладочный вывод
+                current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                is_visible = block_data_obj["model"] in current_blocks
+                current_parent = self.layer_manager.get_current_parent_id()
+                print(f"Импортирован блок {new_block_id} (code={code}), parent_id={parent_id_current}, текущий parent={current_parent}, видим на уровне: {is_visible}, rect_id={block_data_obj.get('rect_id')}, text_id={block_data_obj.get('text_id')}")
+                
+                # Проверяем, что блок действительно виден на текущем уровне
+                if not is_visible:
+                    print(f"ПРЕДУПРЕЖДЕНИЕ: Блок {new_block_id} не виден на текущем уровне! parent_id={parent_id_current}, текущий parent={current_parent}")
+                    # Если блок не виден, возможно нужно обновить его parent_id
+                    if parent_id_current != current_parent:
+                        print(f"Исправляем parent_id блока {new_block_id} с {parent_id_current} на {current_parent}")
+                        block_data_obj["model"].parent_id = current_parent
+            
+            # Импортируем стрелки (только те, которые полностью в пределах импортированных блоков)
+            imported_arrows_count = 0
+            for arrow_data in layer_arrows:
+                from_id = arrow_data.get("from_block_id")
+                to_id = arrow_data.get("to_block_id")
+                
+                # Проверяем, что оба блока импортированы
+                if from_id and from_id not in block_id_mapping:
+                    continue
+                if to_id and to_id not in block_id_mapping:
+                    continue
+                
+                # Создаем новую стрелку с обновленными ID
+                new_from_id = block_id_mapping.get(from_id) if from_id else None
+                new_to_id = block_id_mapping.get(to_id) if to_id else None
+                
+                arrow_id = f"arrow_{self.next_arrow_id}"
+                self.next_arrow_id += 1
+                
+                new_arrow = Arrow(
+                    arrow_id=arrow_id,
+                    from_block_id=new_from_id,
+                    to_block_id=new_to_id,
+                    from_side=arrow_data.get("from_side", "right"),
+                    to_side=arrow_data.get("to_side", "left"),
+                    from_attachment_point=arrow_data.get("from_attachment_point"),
+                    to_attachment_point=arrow_data.get("to_attachment_point"),
+                    color=arrow_data.get("color", Colors.ARROW_COLOR),
+                    width=arrow_data.get("width", 2),
+                    style=arrow_data.get("style", "solid"),
+                    x1=arrow_data.get("x1"),
+                    y1=arrow_data.get("y1"),
+                    x2=arrow_data.get("x2"),
+                    y2=arrow_data.get("y2"),
+                    text=arrow_data.get("text", "")
+                )
+                
+                arrow_data_obj = {
+                    "arrow": new_arrow,
+                    "line_id": None,
+                    "arrowhead_id": None
+                }
+                
+                self.arrows.append(arrow_data_obj)
+                self.draw_arrow(arrow_data_obj)
+                imported_arrows_count += 1
+            
+            # Сохраняем текущее выделение, если оно есть
+            saved_selected_block = self.selected_block
+            
+            # Обновляем стрелки для всех импортированных блоков
+            for block_data_obj in imported_blocks:
+                self.update_arrows_for_block(block_data_obj["id"])
+            
+            # Прокручиваем canvas к импортированным блокам, если они есть
+            if imported_blocks:
+                # Находим центр всех импортированных блоков
+                total_x = 0
+                total_y = 0
+                count = 0
+                for block_data_obj in imported_blocks:
+                    try:
+                        coords = self.canvas.coords(block_data_obj["rect_id"])
+                        if len(coords) >= 4:
+                            center_x = (coords[0] + coords[2]) / 2
+                            center_y = (coords[1] + coords[3]) / 2
+                            total_x += center_x
+                            total_y += center_y
+                            count += 1
+                    except tk.TclError:
+                        pass
+                
+                if count > 0:
+                    avg_x = total_x / count
+                    avg_y = total_y / count
+                    # Прокручиваем canvas к центру импортированных блоков
+                    canvas_width = self.canvas.winfo_width()
+                    canvas_height = self.canvas.winfo_height()
+                    
+                    # Используем scan_markto для прокрутки
+                    try:
+                        # Преобразуем координаты canvas в координаты экрана
+                        screen_x = self.canvas.canvasx(avg_x)
+                        screen_y = self.canvas.canvasy(avg_y)
+                        # Прокручиваем так, чтобы центр блоков был в центре видимой области
+                        self.canvas.scan_markto(0, 0)
+                        self.canvas.scan_dragto(int(screen_x - canvas_width / 2), int(screen_y - canvas_height / 2), gain=1)
+                    except Exception as e:
+                        print(f"Ошибка при прокрутке к импортированным блокам: {e}")
+            
+            # НЕ вызываем refresh_canvas(), так как блоки уже созданы и интерактивны
+            # refresh_canvas() удалит все элементы и перерисует их, что может сломать обработчики событий
+            # Вместо этого просто обновляем стрелки и проверяем ошибки
+            
+            # Проверяем, что все импортированные блоки видны на текущем уровне
+            current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+            current_blocks_ids = {block.id for block in current_blocks_models}
+            print(f"После импорта: текущий parent={self.layer_manager.get_current_parent_id()}, видимых блоков на уровне: {len(current_blocks_ids)}")
+            for block_data_obj in imported_blocks:
+                block_id = block_data_obj["model"].id
+                is_visible = block_id in current_blocks_ids
+                print(f"  Блок {block_id} (code={block_data_obj['model'].code}, parent_id={block_data_obj['model'].parent_id}): видим={is_visible}")
+                if not is_visible:
+                    print(f"  ОШИБКА: Блок {block_id} не виден на текущем уровне!")
+            
+            # Обновляем canvas, чтобы убедиться, что все элементы отображаются
+            self.canvas.update_idletasks()
+            
+            self.check_numbering_errors()
+            
+            # Показываем сообщение об успешном импорте
+            messagebox.showinfo("Импорт", f"Слой '{layer_info['path_str']}' успешно импортирован!\nИмпортировано блоков: {len(imported_blocks)}\nИмпортировано стрелок: {imported_arrows_count}")
+            
+            # Восстанавливаем выделение ПОСЛЕ закрытия диалога, чтобы избежать конфликтов
+            # Используем after для отложенного выполнения, чтобы все операции завершились
+            def restore_selection():
+                # Проверяем, что импортированные блоки видны
+                current_blocks_models = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+                current_blocks_ids = {block.id for block in current_blocks_models}
+                
+                if saved_selected_block:
+                    # Проверяем, что сохраненный блок все еще существует и виден
+                    if saved_selected_block in self.blocks:
+                        if saved_selected_block["model"].id in current_blocks_ids:
+                            print(f"Восстанавливаем выделение сохраненного блока {saved_selected_block['model'].code}")
+                            self.select_block(saved_selected_block)
+                        else:
+                            print(f"Сохраненный блок {saved_selected_block['model'].code} не виден на текущем уровне")
+                
+                # Если нет сохраненного выделения или оно не видно, выделяем первый импортированный блок
+                if not self.selected_block and imported_blocks:
+                    for block_data_obj in imported_blocks:
+                        if block_data_obj["model"].id in current_blocks_ids:
+                            print(f"Выделяем первый импортированный блок {block_data_obj['model'].code}")
+                            self.select_block(block_data_obj)
+                            break
+            
+            # Выполняем восстановление выделения после закрытия диалога
+            self.root.after(200, restore_selection)
+            
+        except Exception as e:
+            messagebox.showerror("Ошибка", f"Не удалось импортировать слой:\n{str(e)}")
     
     def copy_selected(self):
         """Копирует выбранный элемент (блок или стрелку) в буфер обмена"""
@@ -5857,8 +7050,6 @@ class IDEF0App:
                 "y2": arrow.y2,
                 "bend_x": arrow.bend_x,
                 "bend_y": arrow.bend_y,
-                "route_locked": getattr(arrow, "route_locked", False),
-                "locked_path": getattr(arrow, "locked_path", None),
                 "text": arrow.text if hasattr(arrow, 'text') else "",
                 "display_x1": arrow.display_x1,
                 "display_y1": arrow.display_y1,
@@ -5938,10 +7129,68 @@ class IDEF0App:
         if self.clipboard_type == "block":
             # Создаем новый блок в позиции курсора или со смещением
             block_data = self.clipboard
+            
+            # Генерируем новый код на основе текущего уровня
+            parent_id = self.layer_manager.get_current_parent_id()
+            current_blocks = self.layer_manager.get_blocks_for_current_level([b["model"] for b in self.blocks])
+            
+            if parent_id:
+                # Находим родительский блок для наследования кода
+                parent_block = next((b["model"] for b in self.blocks if b["model"].id == parent_id), None)
+                if parent_block:
+                    # Получаем все блоки на этом уровне с тем же родителем и находим первый свободный номер
+                    sibling_blocks = [b for b in self.blocks if b["model"].parent_id == parent_id]
+                    used_numbers = set()
+                    for block_data_item in sibling_blocks:
+                        code_parts = block_data_item["model"].code.split(".")
+                        if len(code_parts) > 1:
+                            try:
+                                num = int(code_parts[-1])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    # Находим первый свободный номер
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    new_code = f"{parent_block.code}.{code_num}"
+                else:
+                    # Находим первый свободный номер на корневом уровне
+                    used_numbers = set()
+                    for block_data_item in current_blocks:
+                        code = block_data_item.code
+                        if code.startswith("A") and "." not in code:
+                            try:
+                                num = int(code[1:])
+                                used_numbers.add(num)
+                            except ValueError:
+                                pass
+                    # Находим первый свободный номер
+                    code_num = 1
+                    while code_num in used_numbers:
+                        code_num += 1
+                    new_code = f"A{code_num}"
+            else:
+                # Корневой уровень - находим первый свободный номер
+                used_numbers = set()
+                for block_data_item in current_blocks:
+                    code = block_data_item.code
+                    if code.startswith("A") and "." not in code:
+                        try:
+                            num = int(code[1:])
+                            used_numbers.add(num)
+                        except ValueError:
+                            pass
+                # Находим первый свободный номер
+                code_num = 1
+                while code_num in used_numbers:
+                    code_num += 1
+                new_code = f"A{code_num}"
+            
             new_block = Block(
                 block_id=None,  # Будет создан новый ID
-                name=block_data["name"],
-                code=block_data["code"],
+                name=f"Блок {new_code}"[:80],  # Генерируем название на основе нового кода
+                code=new_code,  # Используем новый сгенерированный код
                 element_type=block_data["element_type"],
                 description=block_data["description"],
                 x=paste_x,
@@ -5950,7 +7199,7 @@ class IDEF0App:
                 height=block_data["height"],
                 color=block_data["color"],
                 border_width=block_data["border_width"],
-                parent_id=block_data.get("parent_id")
+                parent_id=parent_id  # Используем текущий parent_id, а не из буфера
             )
             
             # Создаем визуальное представление
@@ -5989,18 +7238,6 @@ class IDEF0App:
                 "text_id": text,
                 "resize_handles": {}
             }
-            
-            # Проверяем конфликт ID и сдвигаем при необходимости
-            conflicting_block = next(
-                (b for b in self.blocks 
-                 if b["model"].code == new_block.code and b["model"].id != new_block.id 
-                 and b["model"].parent_id == new_block.parent_id),
-                None
-            )
-            
-            if conflicting_block:
-                # Сдвигаем конфликтующий блок и всех его детей
-                self._shift_block_and_children(conflicting_block)
             
             self.blocks.append(block_data_obj)
             self.make_block_interactive(block_data_obj)
@@ -6061,142 +7298,8 @@ class IDEF0App:
                 new_arrow.style = arrow_data.get("style", "solid")
                 new_arrow.bend_x = arrow_data.get("bend_x")
                 new_arrow.bend_y = arrow_data.get("bend_y")
-                
-                # Восстанавливаем замороженный авто-маршрут (если был) и переносим его вместе со стрелкой
-                try:
-                    if arrow_data.get("route_locked") and arrow_data.get("locked_path"):
-                        base = arrow_data.get("locked_path")
-                        # Смещение относительно исходной первой точки
-                        original_x1 = arrow_data.get("display_x1", arrow_data.get("x1", new_x1))
-                        original_y1 = arrow_data.get("display_y1", arrow_data.get("y1", new_y1))
-                        dx_shift = new_x1 - original_x1
-                        dy_shift = new_y1 - original_y1
-                        shifted = []
-                        for p in base:
-                            shifted.append([float(p[0]) + dx_shift, float(p[1]) + dy_shift])
-                        new_arrow.route_locked = True
-                        new_arrow.locked_path = shifted
-                except Exception:
-                    new_arrow.route_locked = False
-                    new_arrow.locked_path = None
                 self.draw_arrow(new_arrow_data)
                 self.select_arrow(new_arrow_data)
-    
-    def show_documentation(self):
-        """Показывает окно с документацией и горячими клавишами"""
-        doc_window = tk.Toplevel(self.root)
-        doc_window.title("Документация - Горячие клавиши")
-        doc_window.geometry("600x700")
-        doc_window.configure(bg=Colors.BACKGROUND)
-        
-        # Создаем прокручиваемую область
-        canvas = tk.Canvas(doc_window, bg=Colors.BACKGROUND, highlightthickness=0)
-        scrollbar = tk.Scrollbar(doc_window, orient="vertical", command=canvas.yview)
-        scrollable_frame = tk.Frame(canvas, bg=Colors.BACKGROUND)
-        
-        scrollable_frame.bind(
-            "<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
-        )
-        
-        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Заголовок
-        title_label = tk.Label(
-            scrollable_frame,
-            text="Горячие клавиши IDEF0 Editor",
-            font=("Segoe UI", 16, "bold"),
-            bg=Colors.BACKGROUND,
-            fg=Colors.TEXT_PRIMARY
-        )
-        title_label.pack(pady=20)
-        
-        # Раздел: Редактирование
-        section1 = tk.Label(
-            scrollable_frame,
-            text="Редактирование",
-            font=("Segoe UI", 12, "bold"),
-            bg=Colors.BACKGROUND,
-            fg=Colors.TEXT_PRIMARY,
-            anchor="w"
-        )
-        section1.pack(fill=tk.X, padx=20, pady=(10, 5))
-        
-        shortcuts_edit = [
-            ("Ctrl + C", "Копировать выбранный элемент"),
-            ("Ctrl + V", "Вставить элемент из буфера обмена"),
-            ("Ctrl + X", "Вырезать выбранный элемент"),
-            ("Ctrl + Z", "Отменить последнее действие"),
-            ("Ctrl + Y", "Повторить отмененное действие"),
-            ("Delete", "Удалить выбранный элемент"),
-        ]
-        
-        for key, desc in shortcuts_edit:
-            frame = tk.Frame(scrollable_frame, bg=Colors.BACKGROUND)
-            frame.pack(fill=tk.X, padx=20, pady=2)
-            tk.Label(
-                frame,
-                text=key,
-                font=("Segoe UI", 10, "bold"),
-                bg=Colors.BACKGROUND,
-                fg=Colors.PRIMARY,
-                width=15,
-                anchor="w"
-            ).pack(side=tk.LEFT)
-            tk.Label(
-                frame,
-                text=desc,
-                font=("Segoe UI", 10),
-                bg=Colors.BACKGROUND,
-                fg=Colors.TEXT_PRIMARY,
-                anchor="w"
-            ).pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Раздел: Навигация
-        section2 = tk.Label(
-            scrollable_frame,
-            text="Навигация",
-            font=("Segoe UI", 12, "bold"),
-            bg=Colors.BACKGROUND,
-            fg=Colors.TEXT_PRIMARY,
-            anchor="w"
-        )
-        section2.pack(fill=tk.X, padx=20, pady=(20, 5))
-        
-        shortcuts_nav = [
-            ("Space", "Панорамирование холста (удерживать)"),
-            ("Ctrl + Колесо мыши", "Масштабирование"),
-        ]
-        
-        for key, desc in shortcuts_nav:
-            frame = tk.Frame(scrollable_frame, bg=Colors.BACKGROUND)
-            frame.pack(fill=tk.X, padx=20, pady=2)
-            tk.Label(
-                frame,
-                text=key,
-                font=("Segoe UI", 10, "bold"),
-                bg=Colors.BACKGROUND,
-                fg=Colors.PRIMARY,
-                width=15,
-                anchor="w"
-            ).pack(side=tk.LEFT)
-            tk.Label(
-                frame,
-                text=desc,
-                font=("Segoe UI", 10),
-                bg=Colors.BACKGROUND,
-                fg=Colors.TEXT_PRIMARY,
-                anchor="w"
-            ).pack(side=tk.LEFT, padx=(10, 0))
-        
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        
-        # Привязываем прокрутку колесом мыши
-        def on_mousewheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", on_mousewheel)
     
     def show_documentation(self):
         """Отображает окно с документацией"""
