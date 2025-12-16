@@ -1625,7 +1625,28 @@ class IDEF0App:
         print(f"Текущие блоки уровня: {[b.code for b in current_blocks]}")
         if block_data["model"] not in current_blocks:
             print(f"Блок {block_data['model'].code} не принадлежит текущему уровню (parent_id={block_data['model'].parent_id}, текущий parent={self.layer_manager.get_current_parent_id()})")
-            return
+
+            # Автовосстановление после сценария "очистка холста → импорт/открытие проекта":
+            # иногда путь уровня (current_level_path) остается в несогласованном состоянии,
+            # из-за чего клики по видимым блокам не приводят к выделению (фильтрация уровня дает пусто/не тот уровень).
+            # Если блок видим на холсте (по нему кликнули), но модель не попала в current_blocks — пробуем
+            # сброситься на корень и перерисовать холст один раз.
+            if getattr(self, "_select_block_autofix_in_progress", False):
+                return
+            try:
+                self._select_block_autofix_in_progress = True
+                if self.layer_manager.current_level_path:
+                    self.layer_manager.current_level_path = []
+                    self.refresh_canvas()
+
+                    # После refresh_canvas у блока меняются rect_id/text_id, поэтому берем актуальный block_data по id
+                    fresh = next((b for b in self.blocks if b.get("id") == block_data.get("id")), None)
+                    if fresh:
+                        # Повторяем попытку выделения (на корневом уровне)
+                        self.select_block(fresh)
+                return
+            finally:
+                self._select_block_autofix_in_progress = False
         
         # Если открыто меню настроек, закрываем его
         if hasattr(self, 'settings_menu') and self.settings_menu and self.settings_menu.winfo_exists():
