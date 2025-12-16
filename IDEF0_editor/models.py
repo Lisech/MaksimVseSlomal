@@ -396,13 +396,39 @@ class LayerManager:
     
     def get_blocks_for_current_level(self, all_blocks):
         """Возвращает блоки для текущего уровня"""
+        # Защита от "залипшего" пути уровня:
+        # после очистки холста / импорта проекта current_level_path может содержать id,
+        # которых нет в текущем наборе блоков. В этом случае UI может рисовать блоки,
+        # но логика "текущего уровня" будет работать некорректно (клики/выделение не найдут блок).
+        if self.current_level_path:
+            try:
+                existing_ids = {str(b.id) for b in all_blocks if getattr(b, "id", None) is not None}
+                # Если любой id из пути отсутствует в текущих блоках — сбрасываем на корень.
+                if any(str(pid) not in existing_ids for pid in self.current_level_path):
+                    self.current_level_path = []
+            except Exception:
+                # В случае неожиданного формата данных — безопасно сбрасываемся на корень.
+                self.current_level_path = []
+
         if not self.current_level_path:
             # Корневой уровень - блоки без parent_id
             return [block for block in all_blocks if block.parent_id is None]
         else:
             # Уровень детализации - блоки с parent_id = последнему в пути
             parent_id = self.current_level_path[-1]
-            return [block for block in all_blocks if block.parent_id == parent_id]
+            level_blocks = [block for block in all_blocks if block.parent_id == parent_id]
+
+            # Если путь формально валиден, но на "текущем уровне" нет блоков,
+            # а в проекте есть корневые блоки — это частый симптом рассинхронизации UI
+            # после очистки/импорта (блоки нарисованы, но логика уровня фильтрует в пустоту).
+            # В этом случае безопаснее вернуться на корень.
+            if not level_blocks:
+                root_blocks = [block for block in all_blocks if block.parent_id is None]
+                if root_blocks:
+                    self.current_level_path = []
+                    return root_blocks
+
+            return level_blocks
     
     def enter_block_level(self, block):
         """Переход на уровень детализации блока"""
